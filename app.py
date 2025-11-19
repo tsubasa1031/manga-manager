@@ -13,8 +13,11 @@ DATA_FILE = 'manga_data.json'
 def load_data():
     """JSONファイルからデータを読み込む"""
     if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            return []
     return []
 
 def save_data(data):
@@ -27,33 +30,43 @@ def search_books_api(query):
     if not query:
         return []
     
-    url = f"https://www.googleapis.com/books/v1/volumes?q=intitle:{query}&maxResults=5&orderBy=relevance"
+    # 修正点: 'intitle:'を削除し、より広く検索するように変更
+    # langRestrict=ja を追加して日本語の本を優先
+    url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults=10&orderBy=relevance&langRestrict=ja"
     try:
         response = requests.get(url)
         data = response.json()
         candidates = []
+        
         if "items" in data:
             for item in data["items"]:
                 info = item.get("volumeInfo", {})
-                title = info.get("title", "不明")
-                # 発売日などの付加情報も取っておく（今回はタイトルのみ使用）
-                candidates.append(title)
-        return list(set(candidates)) # 重複排除
-    except:
+                title = info.get("title", "")
+                if title:
+                    candidates.append(title)
+        
+        # 重複を排除しつつリスト化
+        return list(dict.fromkeys(candidates))
+    except Exception as e:
+        st.error(f"APIエラーが発生しました: {e}")
         return []
 
 def fetch_next_release_date(title, current_volume):
-    """次回作発売日検索（既存機能）"""
+    """次回作発売日検索"""
     next_vol = int(current_volume) + 1
-    query = f"{title} {next_vol}"
-    url = f"https://www.googleapis.com/books/v1/volumes?q={query}&orderBy=newest"
+    # 検索精度向上のため、タイトルを引用符で囲むなどの工夫
+    query = f'"{title}" {next_vol}'
+    url = f"https://www.googleapis.com/books/v1/volumes?q={query}&orderBy=newest&langRestrict=ja"
     try:
         response = requests.get(url)
         data = response.json()
         if "items" in data:
-            book_info = data["items"][0]["volumeInfo"]
-            if "publishedDate" in book_info:
-                return book_info["publishedDate"]
+            # 発売日が新しい順、または適合度順の上位を確認
+            for item in data["items"]:
+                info = item.get("volumeInfo", {})
+                # タイトルが類似しているか確認（簡易チェック）
+                if title in info.get("title", ""):
+                    return info.get("publishedDate")
     except:
         return None
     return None
@@ -67,43 +80,60 @@ st.title("📚 漫画管理アプリ")
 if 'manga_data' not in st.session_state:
     st.session_state.manga_data = load_data()
 
-# 選択されたタイトルを保持する変数
+# 検索結果の状態管理
+if 'search_results' not in st.session_state:
+    st.session_state.search_results = []
 if 'selected_title_candidate' not in st.session_state:
     st.session_state.selected_title_candidate = ""
 
 # --- 1. 漫画登録セクション ---
 st.header("漫画登録")
 
-# --- A. タイトル検索エリア（予測変換風） ---
+# --- A. タイトル検索エリア ---
 with st.container():
-    st.markdown("##### 🔍 タイトル検索")
-    col_search, col_result = st.columns([1, 2])
+    st.info("💡 漫画名の一部を入力して「検索」ボタンを押すか、Enterキーを押してください。")
+    col_search_input, col_search_btn = st.columns([3, 1])
     
-    with col_search:
-        # ユーザーが途中まで入力する場所
-        search_query = st.text_input("漫画名の一部を入力", placeholder="例: ワンピ")
+    with col_search_input:
+        # ユーザー入力
+        search_query = st.text_input("漫画名検索", placeholder="例: 呪術、ワンピ、推しの子", key="search_input")
     
-    with col_result:
-        # 検索文字がある場合のみAPIを叩く
+    with col_search_btn:
+        # ボタンの位置調整
+        st.write("") 
+        st.write("")
+        search_clicked = st.button("🔍 検索", type="primary")
+
+    # 検索ロジック (ボタン押下 または 入力欄でEnter)
+    if search_clicked or search_query:
         if search_query:
-            candidates = search_books_api(search_query)
-            if candidates:
-                # 候補が見つかったらセレクトボックスで選ばせる
-                selected = st.selectbox("候補から選択してください:", candidates, key="search_select")
-                if selected:
-                    st.session_state.selected_title_candidate = selected
-            else:
-                st.warning("候補が見つかりませんでした。")
+            results = search_books_api(search_query)
+            st.session_state.search_results = results
+            if not results:
+                st.warning("候補が見つかりませんでした。別のキーワードで試してください。")
+
+    # 候補が見つかった場合の表示
+    if st.session_state.search_results:
+        selected = st.selectbox(
+            "↓ 候補からタイトルを選択してください", 
+            ["(選択してください)"] + st.session_state.search_results,
+            key="search_select"
+        )
+        
+        if selected and selected != "(選択してください)":
+            st.session_state.selected_title_candidate = selected
 
 # --- B. 詳細入力フォーム ---
 # 検索で選んだタイトルがあれば、それを初期値にする
 initial_title = st.session_state.get('selected_title_candidate', "")
 
-with st.form("register_form", clear_on_submit=False): # フォーム内での値保持のためclear_on_submitはFalse推奨
+# フォームの枠線
+with st.form("register_form", clear_on_submit=False):
+    st.markdown("#### 📝 登録内容の確認・編集")
     col1, col2 = st.columns(2)
     with col1:
-        # 検索結果をvalueにセット
-        input_title = st.text_input("タイトル（確定）", value=initial_title)
+        # 検索結果をvalueにセット。disabled=Falseなので手修正も可能
+        input_title = st.text_input("タイトル", value=initial_title)
         input_volume = st.number_input("最新の所持巻数", min_value=1, step=1, value=1)
     
     with col2:
@@ -112,42 +142,45 @@ with st.form("register_form", clear_on_submit=False): # フォーム内での値
 
     submitted = st.form_submit_button("リストに追加する")
 
-    if submitted and input_title:
-        # 発売日自動取得ロジック
-        if not input_date:
-            with st.spinner(f'『{input_title}』の次巻情報を検索中...'):
-                fetched_date = fetch_next_release_date(input_title, input_volume)
-                if fetched_date:
-                    input_date = fetched_date
-                    st.success(f"発売日が見つかりました: {fetched_date}")
-                else:
-                    input_date = "不明"
-                    st.warning("発売日が見つかりませんでした。")
+    if submitted:
+        if not input_title:
+            st.error("タイトルを入力してください。")
+        else:
+            # 発売日自動取得ロジック
+            if not input_date:
+                with st.spinner(f'『{input_title}』 {input_volume + 1}巻あたりの情報を検索中...'):
+                    fetched_date = fetch_next_release_date(input_title, input_volume)
+                    if fetched_date:
+                        input_date = fetched_date
+                        st.success(f"発売日が見つかりました: {fetched_date}")
+                    else:
+                        input_date = "不明"
+                        st.warning("発売日が見つかりませんでした（手動で入力してください）")
 
-        # データ保存
-        new_entry = {
-            "id": datetime.now().strftime("%Y%m%d%H%M%S"),
-            "title": input_title,
-            "volume": input_volume,
-            "releaseDate": input_date,
-            "status": input_status
-        }
-        
-        st.session_state.manga_data.append(new_entry)
-        save_data(st.session_state.manga_data)
-        
-        # 完了後のクリア処理
-        st.session_state.selected_title_candidate = "" 
-        st.success(f"『{input_title}』を追加しました！")
-        
-        # 画面更新して入力をリセット
-        # time.sleep(1) # 連続投稿を防ぐなら入れても良い
-        st.rerun()
+            # データ保存
+            new_entry = {
+                "id": datetime.now().strftime("%Y%m%d%H%M%S"),
+                "title": input_title,
+                "volume": input_volume,
+                "releaseDate": input_date,
+                "status": input_status
+            }
+            
+            st.session_state.manga_data.append(new_entry)
+            save_data(st.session_state.manga_data)
+            
+            # 完了処理
+            st.success(f"『{input_title}』を追加しました！")
+            
+            # 状態をリセットしてリロード
+            st.session_state.search_results = []
+            st.session_state.selected_title_candidate = ""
+            # rerunの前に少し待つとUXが良い場合があるが、即時反映のためrerun
+            st.rerun()
 
 st.divider()
 
 # --- 2. リスト表示・編集セクション ---
-# (ここは前回のコードと同じなので、そのまま機能します)
 if st.session_state.manga_data:
     df = pd.DataFrame(st.session_state.manga_data)
 else:
