@@ -26,45 +26,67 @@ def save_data(data):
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 def search_books_api(query):
-    """Google Books APIで本を検索し、候補リストを返す"""
+    """Google Books APIで本を検索し、候補リストを返す（強化版）"""
     if not query:
         return []
     
-    # 修正点: 'intitle:'を削除し、より広く検索するように変更
-    # langRestrict=ja を追加して日本語の本を優先
-    url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults=10&orderBy=relevance&langRestrict=ja"
+    base_url = "https://www.googleapis.com/books/v1/volumes"
+    candidates = []
+    
+    # STEP 1: まず日本語限定で検索してみる
+    params = {
+        "q": query,
+        "maxResults": 10,
+        "orderBy": "relevance",
+        "langRestrict": "ja" # 日本語優先
+    }
+    
     try:
-        response = requests.get(url)
+        response = requests.get(base_url, params=params)
         data = response.json()
-        candidates = []
         
         if "items" in data:
             for item in data["items"]:
                 info = item.get("volumeInfo", {})
-                title = info.get("title", "")
-                if title:
-                    candidates.append(title)
-        
-        # 重複を排除しつつリスト化
+                candidates.append(info.get("title", ""))
+
+        # STEP 2: 結果が0件（または少ない）場合、言語制限を外して再検索（英語タイトルの漫画などのため）
+        if len(candidates) == 0:
+            params.pop("langRestrict", None) # 言語制限を削除
+            response = requests.get(base_url, params=params)
+            data = response.json()
+            if "items" in data:
+                for item in data["items"]:
+                    info = item.get("volumeInfo", {})
+                    candidates.append(info.get("title", ""))
+
+        # 空文字除去と重複排除
+        candidates = [c for c in candidates if c]
         return list(dict.fromkeys(candidates))
+        
     except Exception as e:
-        st.error(f"APIエラーが発生しました: {e}")
+        # エラー時は空リストを返す
         return []
 
 def fetch_next_release_date(title, current_volume):
     """次回作発売日検索"""
     next_vol = int(current_volume) + 1
-    # 検索精度向上のため、タイトルを引用符で囲むなどの工夫
-    query = f'"{title}" {next_vol}'
-    url = f"https://www.googleapis.com/books/v1/volumes?q={query}&orderBy=newest&langRestrict=ja"
+    base_url = "https://www.googleapis.com/books/v1/volumes"
+    
+    # 検索クエリ: "タイトル" 巻数
+    params = {
+        "q": f'"{title}" {next_vol}',
+        "orderBy": "newest",
+        "langRestrict": "ja"
+    }
+
     try:
-        response = requests.get(url)
+        response = requests.get(base_url, params=params)
         data = response.json()
         if "items" in data:
-            # 発売日が新しい順、または適合度順の上位を確認
             for item in data["items"]:
                 info = item.get("volumeInfo", {})
-                # タイトルが類似しているか確認（簡易チェック）
+                # タイトルが部分一致するか確認
                 if title in info.get("title", ""):
                     return info.get("publishedDate")
     except:
@@ -91,26 +113,28 @@ st.header("漫画登録")
 
 # --- A. タイトル検索エリア ---
 with st.container():
-    st.info("💡 漫画名の一部を入力して「検索」ボタンを押すか、Enterキーを押してください。")
+    st.info("💡 漫画名を入力して「検索」ボタンを押してください（例: ワンピ、呪術）")
     col_search_input, col_search_btn = st.columns([3, 1])
     
     with col_search_input:
         # ユーザー入力
-        search_query = st.text_input("漫画名検索", placeholder="例: 呪術、ワンピ、推しの子", key="search_input")
+        search_query = st.text_input("漫画名検索", placeholder="漫画のタイトルを入力...", key="search_input")
     
     with col_search_btn:
-        # ボタンの位置調整
+        # ボタンの位置調整用
         st.write("") 
         st.write("")
         search_clicked = st.button("🔍 検索", type="primary")
 
-    # 検索ロジック (ボタン押下 または 入力欄でEnter)
+    # 検索ロジック
     if search_clicked or search_query:
-        if search_query:
-            results = search_books_api(search_query)
-            st.session_state.search_results = results
-            if not results:
-                st.warning("候補が見つかりませんでした。別のキーワードで試してください。")
+        # ボタンが押された、かつ入力がある場合のみ実行（空エンター対策）
+        if search_clicked and search_query:
+            with st.spinner('本を探しています...'):
+                results = search_books_api(search_query)
+                st.session_state.search_results = results
+                if not results:
+                    st.warning("候補が見つかりませんでした。別のキーワードで試してください。")
 
     # 候補が見つかった場合の表示
     if st.session_state.search_results:
@@ -127,12 +151,10 @@ with st.container():
 # 検索で選んだタイトルがあれば、それを初期値にする
 initial_title = st.session_state.get('selected_title_candidate', "")
 
-# フォームの枠線
 with st.form("register_form", clear_on_submit=False):
     st.markdown("#### 📝 登録内容の確認・編集")
     col1, col2 = st.columns(2)
     with col1:
-        # 検索結果をvalueにセット。disabled=Falseなので手修正も可能
         input_title = st.text_input("タイトル", value=initial_title)
         input_volume = st.number_input("最新の所持巻数", min_value=1, step=1, value=1)
     
@@ -157,7 +179,6 @@ with st.form("register_form", clear_on_submit=False):
                         input_date = "不明"
                         st.warning("発売日が見つかりませんでした（手動で入力してください）")
 
-            # データ保存
             new_entry = {
                 "id": datetime.now().strftime("%Y%m%d%H%M%S"),
                 "title": input_title,
@@ -169,13 +190,11 @@ with st.form("register_form", clear_on_submit=False):
             st.session_state.manga_data.append(new_entry)
             save_data(st.session_state.manga_data)
             
-            # 完了処理
             st.success(f"『{input_title}』を追加しました！")
             
-            # 状態をリセットしてリロード
+            # リセット処理
             st.session_state.search_results = []
             st.session_state.selected_title_candidate = ""
-            # rerunの前に少し待つとUXが良い場合があるが、即時反映のためrerun
             st.rerun()
 
 st.divider()
