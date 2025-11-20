@@ -26,19 +26,23 @@ def save_data(data):
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 def search_books_api(query):
-    """Google Books APIで本を検索し、候補リストを返す（強化版）"""
+    """
+    Google Books APIで本を検索し、
+    {タイトル, 画像URL, 最新巻数(推定), 著者} のリストを返す
+    """
     if not query:
         return []
     
     base_url = "https://www.googleapis.com/books/v1/volumes"
-    candidates = []
+    results = []
     
-    # STEP 1: まず日本語限定で検索してみる
+    # 日本語優先、漫画・書籍で検索
     params = {
         "q": query,
         "maxResults": 10,
         "orderBy": "relevance",
-        "langRestrict": "ja" # 日本語優先
+        "langRestrict": "ja",
+        "printType": "books"
     }
     
     try:
@@ -48,24 +52,24 @@ def search_books_api(query):
         if "items" in data:
             for item in data["items"]:
                 info = item.get("volumeInfo", {})
-                candidates.append(info.get("title", ""))
+                
+                # 必要な情報を抽出
+                title = info.get("title", "")
+                authors = info.get("authors", ["不明"])
+                image_links = info.get("imageLinks", {})
+                thumbnail = image_links.get("thumbnail", "")
+                
+                # 重複排除用のキー
+                if title:
+                    results.append({
+                        "title": title,
+                        "author": ", ".join(authors),
+                        "thumbnail": thumbnail
+                    })
 
-        # STEP 2: 結果が0件（または少ない）場合、言語制限を外して再検索（英語タイトルの漫画などのため）
-        if len(candidates) == 0:
-            params.pop("langRestrict", None) # 言語制限を削除
-            response = requests.get(base_url, params=params)
-            data = response.json()
-            if "items" in data:
-                for item in data["items"]:
-                    info = item.get("volumeInfo", {})
-                    candidates.append(info.get("title", ""))
-
-        # 空文字除去と重複排除
-        candidates = [c for c in candidates if c]
-        return list(dict.fromkeys(candidates))
+        return results
         
     except Exception as e:
-        # エラー時は空リストを返す
         return []
 
 def fetch_next_release_date(title, current_volume):
@@ -105,62 +109,77 @@ if 'manga_data' not in st.session_state:
 # 検索結果の状態管理
 if 'search_results' not in st.session_state:
     st.session_state.search_results = []
-if 'selected_title_candidate' not in st.session_state:
-    st.session_state.selected_title_candidate = ""
+if 'selected_book' not in st.session_state:
+    st.session_state.selected_book = None
 
 # --- 1. 漫画登録セクション ---
 st.header("漫画登録")
 
 # --- A. タイトル検索エリア ---
 with st.container():
-    st.info("💡 漫画名を入力して「検索」ボタンを押してください（例: ワンピ、呪術）")
+    st.info("💡 漫画名を入力して「検索」してください。候補と表紙が表示されます。")
     col_search_input, col_search_btn = st.columns([3, 1])
     
     with col_search_input:
-        # ユーザー入力
-        search_query = st.text_input("漫画名検索", placeholder="漫画のタイトルを入力...", key="search_input")
+        search_query = st.text_input("漫画名検索", placeholder="例: 呪術廻戦、ワンピース", key="search_input")
     
     with col_search_btn:
-        # ボタンの位置調整用
         st.write("") 
         st.write("")
         search_clicked = st.button("🔍 検索", type="primary")
 
-    # 検索ロジック
-    if search_clicked or search_query:
-        # ボタンが押された、かつ入力がある場合のみ実行（空エンター対策）
-        if search_clicked and search_query:
-            with st.spinner('本を探しています...'):
-                results = search_books_api(search_query)
-                st.session_state.search_results = results
-                if not results:
-                    st.warning("候補が見つかりませんでした。別のキーワードで試してください。")
+    # 検索実行
+    if search_clicked and search_query:
+        with st.spinner('本を探しています...'):
+            results = search_books_api(search_query)
+            st.session_state.search_results = results
+            st.session_state.selected_book = None # 検索し直したら選択リセット
+            if not results:
+                st.warning("候補が見つかりませんでした。")
 
-    # 候補が見つかった場合の表示
+    # 検索結果の表示（リッチな表示に変更）
     if st.session_state.search_results:
-        selected = st.selectbox(
-            "↓ 候補からタイトルを選択してください", 
-            ["(選択してください)"] + st.session_state.search_results,
+        # 選択肢のラベルを作成（タイトル + 著者）
+        options = ["(選択してください)"] + [f"{r['title']} ({r['author']})" for r in st.session_state.search_results]
+        
+        selected_option = st.selectbox(
+            "↓ 候補から選択してください", 
+            options,
             key="search_select"
         )
         
-        if selected and selected != "(選択してください)":
-            st.session_state.selected_title_candidate = selected
+        # 選択されたら詳細データを保持
+        if selected_option and selected_option != "(選択してください)":
+            index = options.index(selected_option) - 1
+            st.session_state.selected_book = st.session_state.search_results[index]
 
 # --- B. 詳細入力フォーム ---
-# 検索で選んだタイトルがあれば、それを初期値にする
-initial_title = st.session_state.get('selected_title_candidate', "")
+# 選択された本の情報があれば初期値にする
+initial_title = ""
+initial_image = ""
 
+if st.session_state.selected_book:
+    initial_title = st.session_state.selected_book['title']
+    initial_image = st.session_state.selected_book['thumbnail']
+
+# フォームエリア
 with st.form("register_form", clear_on_submit=False):
-    st.markdown("#### 📝 登録内容の確認・編集")
-    col1, col2 = st.columns(2)
-    with col1:
+    st.markdown("#### 📝 登録内容")
+    
+    # 2カラムレイアウト：左に入力、右に表紙画像
+    col_form, col_img = st.columns([2, 1])
+    
+    with col_form:
         input_title = st.text_input("タイトル", value=initial_title)
         input_volume = st.number_input("最新の所持巻数", min_value=1, step=1, value=1)
-    
-    with col2:
         input_status = st.selectbox("状態", ["own", "want"], format_func=lambda x: "持ってる" if x == "own" else "欲しい")
         input_date = st.text_input("次巻発売日 (空欄で自動取得)", placeholder="YYYY-MM-DD")
+
+    with col_img:
+        if initial_image:
+            st.image(initial_image, caption="表紙イメージ", width=100)
+        else:
+            st.write("No Image")
 
     submitted = st.form_submit_button("リストに追加する")
 
@@ -168,23 +187,24 @@ with st.form("register_form", clear_on_submit=False):
         if not input_title:
             st.error("タイトルを入力してください。")
         else:
-            # 発売日自動取得ロジック
+            # 発売日自動取得
             if not input_date:
-                with st.spinner(f'『{input_title}』 {input_volume + 1}巻あたりの情報を検索中...'):
+                with st.spinner(f'『{input_title}』の次巻情報を検索中...'):
                     fetched_date = fetch_next_release_date(input_title, input_volume)
                     if fetched_date:
                         input_date = fetched_date
                         st.success(f"発売日が見つかりました: {fetched_date}")
                     else:
                         input_date = "不明"
-                        st.warning("発売日が見つかりませんでした（手動で入力してください）")
+                        st.warning("発売日が見つかりませんでした")
 
             new_entry = {
                 "id": datetime.now().strftime("%Y%m%d%H%M%S"),
                 "title": input_title,
                 "volume": input_volume,
                 "releaseDate": input_date,
-                "status": input_status
+                "status": input_status,
+                "image": initial_image # 画像URLも保存
             }
             
             st.session_state.manga_data.append(new_entry)
@@ -192,9 +212,9 @@ with st.form("register_form", clear_on_submit=False):
             
             st.success(f"『{input_title}』を追加しました！")
             
-            # リセット処理
+            # リセット
             st.session_state.search_results = []
-            st.session_state.selected_title_candidate = ""
+            st.session_state.selected_book = None
             st.rerun()
 
 st.divider()
@@ -203,11 +223,13 @@ st.divider()
 if st.session_state.manga_data:
     df = pd.DataFrame(st.session_state.manga_data)
 else:
-    df = pd.DataFrame(columns=["id", "title", "volume", "releaseDate", "status"])
+    df = pd.DataFrame(columns=["id", "title", "volume", "releaseDate", "status", "image"])
 
 tab1, tab2 = st.tabs(["📘 持ってる漫画", "🌟 欲しい漫画"])
 
+# 画像列を表示するための設定（Streamlit 1.23+）
 column_config = {
+    "image": st.column_config.ImageColumn("表紙", width="small"),
     "title": "タイトル",
     "volume": st.column_config.NumberColumn("最新巻数", format="%d巻"),
     "releaseDate": st.column_config.DateColumn("次巻発売日", format="YYYY-MM-DD"),
@@ -244,6 +266,7 @@ with tab2:
 
 # --- 3. CSVダウンロード ---
 if st.session_state.manga_data:
+    # CSVには画像URLを含めるか、除外するか（ここでは含める）
     csv_df = pd.DataFrame(st.session_state.manga_data).drop(columns=['id'])
     csv = csv_df.to_csv(index=False, encoding='utf_8_sig')
     st.download_button("📥 CSVダウンロード", csv, "manga_list.csv", "text/csv")
