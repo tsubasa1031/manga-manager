@@ -38,15 +38,6 @@ def save_data(data):
 # --- 楽天ブックスAPI 関連関数 ---
 
 def search_rakuten_books(query, app_id, genre_id="001001"):
-    """
-    楽天ブックスAPIで検索
-    genre_id:
-        '001001': 漫画 (コミック)
-        '001': 本 (書籍全般)
-        '003': DVD/Blu-ray (アニメ等)
-        '006': ゲーム
-        '': すべて
-    """
     if not query or not app_id:
         return []
 
@@ -54,12 +45,11 @@ def search_rakuten_books(query, app_id, genre_id="001001"):
     
     params = {
         "applicationId": app_id,
-        "keyword": query, # titleではなくkeywordにすることで広く検索
+        "keyword": query,
         "hits": 20,
         "sort": "standard"
     }
     
-    # ジャンル指定がある場合
     if genre_id:
         params["booksGenreId"] = genre_id
 
@@ -73,13 +63,12 @@ def search_rakuten_books(query, app_id, genre_id="001001"):
                 info = item.get("Item", {})
                 title = info.get("title", "")
                 
-                # 重複排除
                 if title and not any(r['title'] == title for r in results):
                     results.append({
                         "title": title,
                         "author": info.get("author", "不明"),
                         "publisher": info.get("publisherName", ""),
-                        "image": info.get("largeImageUrl", ""), # 修正: thumbnail -> image に統一
+                        "image": info.get("largeImageUrl", ""),
                         "link": info.get("itemUrl", ""),
                         "isbn": info.get("isbn", ""),
                         "source": "Rakuten"
@@ -89,25 +78,20 @@ def search_rakuten_books(query, app_id, genre_id="001001"):
         return []
 
 def fetch_date_rakuten(title, next_vol, app_id):
-    """
-    楽天APIで次巻の発売日を探す
-    漫画ジャンル(001001)で、発売日が新しい順にソートして検索
-    """
     if not app_id: return None
     
     url = "https://app.rakuten.co.jp/services/api/BooksBook/Search/20170404"
     params = {
         "applicationId": app_id,
-        "title": f"{title} {next_vol}", # タイトル + 巻数
-        "booksGenreId": "001001",      # 漫画に限定
+        "title": f"{title} {next_vol}",
+        "booksGenreId": "001001",
         "hits": 1,
-        "sort": "-releaseDate"         # 新しい順
+        "sort": "-releaseDate"
     }
     try:
         response = requests.get(url, params=params)
         data = response.json()
         if "Items" in data and len(data["Items"]) > 0:
-            # 楽天の日付形式: "2023年10月04日" や "2023年10月"
             return data["Items"][0]["Item"].get("salesDate")
     except:
         pass
@@ -179,7 +163,6 @@ if view_mode == "➕ 漫画登録":
         with col_s1:
             search_query = st.text_input("タイトル検索 (楽天)", placeholder="例: 呪術廻戦", key="s_in")
             
-            # 楽天ブックスAPI用のジャンルフィルタ
             filter_option = st.radio(
                 "検索ジャンル:",
                 ["漫画 (Comic)", "書籍 (Books)", "アニメ (DVD/BD)", "ゲーム (Game)", "すべて"],
@@ -187,10 +170,9 @@ if view_mode == "➕ 漫画登録":
                 horizontal=True
             )
             
-            # ジャンルIDへのマッピング
             if "漫画" in filter_option: genre_id = "001001"
             elif "書籍" in filter_option: genre_id = "001"
-            elif "アニメ" in filter_option: genre_id = "003" # DVD/Blu-ray
+            elif "アニメ" in filter_option: genre_id = "003"
             elif "ゲーム" in filter_option: genre_id = "006"
             else: genre_id = ""
 
@@ -207,13 +189,11 @@ if view_mode == "➕ 漫画登録":
                 if not results: st.warning("見つかりませんでした。")
 
         if st.session_state.search_results:
-            # リスト表示を見やすく
             opts = ["(選択してください)"] + [f"{r['title']} - {r['author']}" for r in st.session_state.search_results]
             sel = st.selectbox("候補を選択", opts, key="s_sel")
             if sel != "(選択してください)":
                 st.session_state.selected_book = st.session_state.search_results[opts.index(sel)-1]
 
-    # 入力フォーム
     init = {"title":"", "image":"", "author":"", "publisher":"", "isbn":"", "link":""}
     if st.session_state.selected_book: init = st.session_state.selected_book
 
@@ -239,15 +219,12 @@ if view_mode == "➕ 漫画登録":
             st.caption(f"著者: {init['author']} / 出版社: {init['publisher']}")
 
         with c2:
-            # ここで init["image"] を参照する際に、以前の search_rakuten_books は "thumbnail" というキーを使っていたため
-            # キーエラーが発生していました。search_rakuten_books 側を "image" に修正しました。
             if init.get("image"): 
                 st.image(init["image"], width=100)
             else: 
                 st.info("No Image")
 
         if st.form_submit_button("追加") and title:
-            # 発売日自動取得 (楽天)
             if not date and rakuten_app_id:
                 next_v = vol + 1
                 fetched = fetch_date_rakuten(title, next_v, rakuten_app_id)
@@ -275,17 +252,57 @@ if view_mode == "➕ 漫画登録":
 # --- ビュー定義 ---
 if view_mode == "🏆 全件リスト":
     st.header("🏆 全件リスト")
+    
     if st.session_state.manga_data:
         df = pd.DataFrame(st.session_state.manga_data)
-        df_s = df.sort_values(["my_score", "title"], ascending=[False, True])
-        e_df = st.data_editor(df_s, column_config=common_column_config, use_container_width=True, hide_index=True, key="e_all")
-        if not df_s.equals(e_df): update_data(e_df); st.rerun()
-    else: st.info("データなし")
+        
+        # 表示形式の切り替え
+        list_style = st.radio("表示形式", ["📂 シリーズ別 (フォルダ)", "📄 フラット (全件表示)"], horizontal=True)
+
+        if "シリーズ別" in list_style:
+            # シリーズごとにグループ化
+            titles = df['title'].unique()
+            # シリーズの並び順（ID順＝追加順でソート）
+            # 各タイトルの最初のデータのIDを取得してソート
+            series_order = []
+            for t in titles:
+                first_id = df[df['title'] == t]['id'].min()
+                series_order.append((t, first_id))
+            # IDの昇順（古い順）＝追加順
+            series_order.sort(key=lambda x: x[1])
+            
+            for title, _ in series_order:
+                series_df = df[df['title'] == title].sort_values("volume")
+                vol_count = len(series_df)
+                min_vol = series_df['volume'].min()
+                max_vol = series_df['volume'].max()
+                
+                # フォルダ（Expander）表示
+                with st.expander(f"📂 {title} (Vol.{min_vol} - {max_vol}) : 全{vol_count}冊"):
+                    edited_series = st.data_editor(
+                        series_df,
+                        column_config=common_column_config,
+                        use_container_width=True,
+                        hide_index=True,
+                        key=f"editor_series_{title}"
+                    )
+                    if not series_df.equals(edited_series):
+                        update_data(edited_series)
+                        st.rerun()
+        else:
+            # フラット表示：ID順（作成順）にソート（古い順＝新しいのが下）
+            df_s = df.sort_values("id", ascending=True)
+            e_df = st.data_editor(df_s, column_config=common_column_config, use_container_width=True, hide_index=True, key="e_all")
+            if not df_s.equals(e_df): update_data(e_df); st.rerun()
+            
+    else:
+        st.info("データなし")
 
 if view_mode == "🆕 新着ビュー":
     st.header("🆕 新着ビュー")
     if st.session_state.manga_data:
         df = pd.DataFrame(st.session_state.manga_data)
+        # 新しい順（降順）
         df_n = df.sort_values("id", ascending=False)
         e_df = st.data_editor(df_n, column_config=common_column_config, use_container_width=True, hide_index=True, key="e_new")
         if not df_n.equals(e_df): update_data(e_df); st.rerun()
