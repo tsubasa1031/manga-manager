@@ -79,9 +79,9 @@ def search_rakuten_books(query, app_id, genre_id="001001"):
                         "title": title,
                         "author": info.get("author", "不明"),
                         "publisher": info.get("publisherName", ""),
-                        "thumbnail": info.get("largeImageUrl", ""), # 高画質画像
+                        "image": info.get("largeImageUrl", ""), # 修正: thumbnail -> image に統一
                         "link": info.get("itemUrl", ""),
-                        "isbn": info.get("isbn", ""), # JANコードなどもここに入る場合あり
+                        "isbn": info.get("isbn", ""),
                         "source": "Rakuten"
                     })
         return results
@@ -239,8 +239,12 @@ if view_mode == "➕ 漫画登録":
             st.caption(f"著者: {init['author']} / 出版社: {init['publisher']}")
 
         with c2:
-            if init["image"]: st.image(init["image"], width=100)
-            else: st.info("No Image")
+            # ここで init["image"] を参照する際に、以前の search_rakuten_books は "thumbnail" というキーを使っていたため
+            # キーエラーが発生していました。search_rakuten_books 側を "image" に修正しました。
+            if init.get("image"): 
+                st.image(init["image"], width=100)
+            else: 
+                st.info("No Image")
 
         if st.form_submit_button("追加") and title:
             # 発売日自動取得 (楽天)
@@ -257,8 +261,8 @@ if view_mode == "➕ 漫画登録":
                 "id": datetime.now().strftime("%Y%m%d%H%M%S"),
                 "title": title, "volume": vol, "releaseDate": date, "status": status,
                 "my_score": score, "genre": genre, "is_finished": f_chk, "is_unread": u_chk,
-                "image": init["image"], "author": init["author"], "publisher": init["publisher"],
-                "isbn": init["isbn"], "link": init["link"]
+                "image": init.get("image", ""), "author": init.get("author", ""), "publisher": init.get("publisher", ""),
+                "isbn": init.get("isbn", ""), "link": init.get("link", "")
             }
             st.session_state.manga_data.append(new_d)
             save_data(st.session_state.manga_data)
