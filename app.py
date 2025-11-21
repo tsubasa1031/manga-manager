@@ -48,7 +48,6 @@ def normalize_title(title):
     title = unicodedata.normalize('NFKC', title)
     
     # 2. 明示的な巻数パターンを削除（場所を問わず削除）
-    # 例: "タイトル(1)特装版" -> "タイトル特装版"
     patterns = [
         r'\s*\(\d+\)',          # (1)
         r'\s*\[\d+\]',          # [1]
@@ -65,8 +64,6 @@ def normalize_title(title):
         title = re.sub(pattern, ' ', title, flags=re.IGNORECASE)
 
     # 3. 独立した数字の削除（スペースに挟まれた数字など）
-    # 例: "タイトル 10 特装版" -> "タイトル  特装版"
-    # 末尾の数字も削除
     title = re.sub(r'\s+\d+(\s|$)', ' ', title)
     
     # 4. 余分なスペースを整理
@@ -85,7 +82,7 @@ def extract_volume(title):
         r'\d+巻',
         r'Vol\.?(\d+)',
         r'[\(\[\<](\d+)[\)\]\>]', # (数字)
-        r'\s(\d+)\s',             # スペースに挟まれた数字 "Title 10 Special"
+        r'\s(\d+)\s',             # スペースに挟まれた数字
         r'(\d+)$',                # 末尾の数字
     ]
     
@@ -150,12 +147,24 @@ def search_rakuten_books(query, app_id, genre_id="001001", hits=30):
         return []
 
 def get_next_volume_info(series_title, next_vol, app_id):
+    """次巻の情報をAPIから取得（通常版優先）"""
     if not app_id: return None
+    
     query = f"{series_title} {next_vol}"
-    results = search_rakuten_books(query, app_id, genre_id="001001", hits=1)
-    if results:
-        return results[0]
-    return None
+    
+    results = search_rakuten_books(query, app_id, genre_id="001001", hits=10)
+    
+    if not results:
+        return None
+
+    exclude_keywords = ["特装版", "限定版", "同梱版", "プレミアム", "ドラマCD", "小冊子", "付録"]
+    
+    for res in results:
+        title = res["title"]
+        if not any(kw in title for kw in exclude_keywords):
+            return res
+            
+    return results[0]
 
 
 # --- アプリケーション本体 ---
@@ -168,6 +177,9 @@ if 'search_results' not in st.session_state:
     st.session_state.search_results = []
 if 'selected_book' not in st.session_state:
     st.session_state.selected_book = None
+# 前回の検索クエリを保存して、入力が変わったときだけ検索するようにする
+if 'last_search_query' not in st.session_state:
+    st.session_state.last_search_query = ""
 
 # --- サイドバー ---
 with st.sidebar:
@@ -233,36 +245,37 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
     if not rakuten_app_id:
         st.warning("⚠️ サイドバーで楽天Application IDを設定してください。")
 
-    # --- 1. 登録フォーム ---
+    # --- 1. 登録フォーム（自動検索） ---
     with st.container():
-        col_s1, col_s2 = st.columns([3, 1])
-        with col_s1:
-            search_query = st.text_input("タイトル検索 (楽天)", placeholder="例: 呪術廻戦", key="s_in")
-            filter_option = st.radio(
-                "検索ジャンル:", ["漫画 (Comic)", "書籍 (Books)", "アニメ (DVD/BD)", "ゲーム (Game)", "すべて"],
-                index=0, horizontal=True
-            )
-            if "漫画" in filter_option: genre_id = "001001"
-            elif "書籍" in filter_option: genre_id = "001"
-            elif "アニメ" in filter_option: genre_id = "003"
-            elif "ゲーム" in filter_option: genre_id = "006"
-            else: genre_id = ""
+        # 検索クエリ入力欄 (Enterで自動検索)
+        search_query = st.text_input("タイトル検索 (入力してEnterで候補表示)", placeholder="例: 呪術廻戦", key="s_in")
+        
+        # フィルタ設定
+        filter_option = st.radio(
+            "検索ジャンル:", ["漫画 (Comic)", "書籍 (Books)", "アニメ (DVD/BD)", "ゲーム (Game)", "すべて"],
+            index=0, horizontal=True
+        )
+        if "漫画" in filter_option: genre_id = "001001"
+        elif "書籍" in filter_option: genre_id = "001"
+        elif "アニメ" in filter_option: genre_id = "003"
+        elif "ゲーム" in filter_option: genre_id = "006"
+        else: genre_id = ""
 
-        with col_s2:
-            st.write("")
-            st.write("")
-            search_clicked = st.button("🔍 検索", type="primary", disabled=not rakuten_app_id)
-
-        if search_clicked and search_query and rakuten_app_id:
-            with st.spinner('楽天ブックスで検索中...'):
+        # --- 自動検索ロジック ---
+        # クエリがあり、かつ前回の検索と違う場合、または明示的にまだ結果がない場合に実行
+        if search_query and rakuten_app_id and search_query != st.session_state.last_search_query:
+            with st.spinner('候補を検索中...'):
                 st.session_state.selected_book = None
                 results = search_rakuten_books(search_query, rakuten_app_id, genre_id)
                 st.session_state.search_results = results
-                if not results: st.warning("見つかりませんでした。")
+                st.session_state.last_search_query = search_query # 検索済みクエリとして記録
+                if not results:
+                    st.warning("見つかりませんでした。")
 
+        # 候補リスト（予測変換のような役割）
         if st.session_state.search_results:
             opts = ["(選択してください)"] + [f"{r['title']} - {r['author']}" for r in st.session_state.search_results]
-            sel = st.selectbox("候補を選択", opts, key="s_sel")
+            sel = st.selectbox("↓ 候補から選択", opts, key="s_sel")
             if sel != "(選択してください)":
                 st.session_state.selected_book = st.session_state.search_results[opts.index(sel)-1]
 
@@ -297,11 +310,6 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
             else: st.info("No Image")
 
         if st.form_submit_button("追加") and title:
-            # 手動入力の場合もAPIで補完を試みる
-            if not date and rakuten_app_id:
-                next_v = vol + 1
-                fetched = fetch_date_rakuten(title, next_v, rakuten_app_id) # 未定義ならskip
-            
             new_d = {
                 "id": datetime.now().strftime("%Y%m%d%H%M%S"),
                 "title": title, "volume": vol, "releaseDate": date, "status": status,
@@ -312,8 +320,11 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
             st.session_state.manga_data.append(new_d)
             save_data(st.session_state.manga_data)
             st.success(f"『{title}』 Vol.{vol} を追加しました")
+            
+            # 追加後はリセット
             st.session_state.search_results = []
             st.session_state.selected_book = None
+            st.session_state.last_search_query = "" 
             st.rerun()
 
     st.divider()
@@ -364,20 +375,20 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                 
                 # フォルダ (Expander)
                 count = len(series['df'])
-                with st.expander(f"{series['title']} ({count})"):
+                with st.expander(f"📂 {series['title']} ({count})"):
                     
                     # --- 次巻追加 ---
                     next_vol_num = int(series['max_vol']) + 1
                     if st.button(f"➕ Vol.{next_vol_num} 追加", key=f"add_n_{series['title']}"):
-                        with st.spinner("検索中..."):
+                        with st.spinner("検索中... (通常版を優先)"):
                             new_info = get_next_volume_info(series['title'], next_vol_num, rakuten_app_id)
                             base = series['meta']
                             new_entry = {
                                 "id": datetime.now().strftime("%Y%m%d%H%M%S"),
                                 "title": series['title'],
                                 "volume": next_vol_num,
-                                "status": "own",
-                                "my_score": 5,
+                                "status": "want",
+                                "my_score": 0,
                                 "genre": base.get("genre", ""),
                                 "is_finished": False,
                                 "is_unread": True,
@@ -405,7 +416,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                             else:
                                 st.caption("No Image")
                             
-                            # 編集ボタン
+                            # 編集ボタン (単に「編集」)
                             if st.button("編集", key=f"ve_{row['id']}"):
                                 edit_dialog(row.to_dict())
 
