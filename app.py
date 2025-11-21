@@ -364,7 +364,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                 
                 # フォルダ (Expander)
                 count = len(series['df'])
-                with st.expander(f"📂 {series['title']} ({count})"):
+                with st.expander(f"{series['title']} ({count})"):
                     
                     # --- 次巻追加 ---
                     next_vol_num = int(series['max_vol']) + 1
@@ -377,7 +377,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                                 "title": series['title'],
                                 "volume": next_vol_num,
                                 "status": "own",
-                                "my_score": 0,
+                                "my_score": 5,
                                 "genre": base.get("genre", ""),
                                 "is_finished": False,
                                 "is_unread": True,
