@@ -49,14 +49,12 @@ def search_ndl(query, media_type='1'):
     Endpoint: https://ndlsearch.ndl.go.jp/api/opensearch
     
     media_type:
-        '1': 本 (Books) -> 漫画はここ
-        '9': 映像 (Video) -> アニメはここ
-        '': すべて
+        '1': 本 (Books) -> 漫画はこれ + ISBNフィルタ
+        '': すべて (アニメDVDなどはここ)
     """
     if not query: return []
     
     url = "https://ndlsearch.ndl.go.jp/api/opensearch"
-    # cnt: 取得件数
     params = {
         "title": query,
         "cnt": 20,
@@ -69,27 +67,24 @@ def search_ndl(query, media_type='1'):
     results = []
     try:
         response = requests.get(url, params=params)
-        # XMLをパース
         root = ET.fromstring(response.content)
         
-        # 名前空間の定義 (RSS 2.0 + DC)
         namespaces = {
             'dc': 'http://purl.org/dc/elements/1.1/',
             'openSearch': 'http://a9.com/-/spec/opensearchrss/1.0/',
             'rdfs': 'http://www.w3.org/2000/01/rdf-schema#'
         }
         
-        # channel要素の下にあるitem要素をループ
         for item in root.findall('.//item'):
             title = get_text_from_element(item, 'title', namespaces)
-            author = get_text_from_element(item, 'author', namespaces) # item直下のauthorはRSS標準
+            author = get_text_from_element(item, 'author', namespaces)
             if not author:
-                author = get_text_from_element(item, 'dc:creator', namespaces) # なければdc:creator
+                author = get_text_from_element(item, 'dc:creator', namespaces)
                 
             publisher = get_text_from_element(item, 'dc:publisher', namespaces)
             link = get_text_from_element(item, 'link', namespaces)
             
-            # ISBNの取得
+            # ISBN取得
             isbn = ""
             for ident in item.findall('dc:identifier', namespaces):
                 val = ident.text.replace('-', '') if ident.text else ""
@@ -97,9 +92,12 @@ def search_ndl(query, media_type='1'):
                     isbn = val
                     break
             
-            # タイトルがあり、かつ重複していない場合に追加
+            # 【重要】フィルタリング処理
+            # 「漫画・書籍」モード('1')の場合、ISBNがないアイテム（CDやグッズ等）は除外する
+            if media_type == '1' and not isbn:
+                continue
+            
             if title and not any(r['title'] == title for r in results):
-                # 書影URLの生成 (NDL書影API)
                 thumbnail = ""
                 if isbn:
                     thumbnail = f"https://ndlsearch.ndl.go.jp/thumbnail/{isbn}.jpg"
@@ -111,7 +109,7 @@ def search_ndl(query, media_type='1'):
                     "thumbnail": thumbnail,
                     "link": link,
                     "isbn": isbn,
-                    "source": "NDL" # 国立国会図書館
+                    "source": "NDL"
                 })
                 
         return results
@@ -119,37 +117,23 @@ def search_ndl(query, media_type='1'):
         return []
 
 def fetch_date_ndl(title, next_vol):
-    """
-    国立国会図書館サーチ API で次巻の発売日を検索
-    dpid=jpro (JPRO) を指定して出版予定・新刊情報を優先検索
-    """
+    """次巻の発売日検索 (JPRO優先)"""
     url = "https://ndlsearch.ndl.go.jp/api/opensearch"
     query = f"{title} {next_vol}"
-    
-    # dpid=jpro を指定して出版情報(近刊含む)を狙う
-    params = {
-        "title": query,
-        "cnt": 1,
-        "dpid": "jpro" 
-    }
+    params = {"title": query, "cnt": 1, "dpid": "jpro"}
     
     try:
         response = requests.get(url, params=params)
         root = ET.fromstring(response.content)
         namespaces = {'dc': 'http://purl.org/dc/elements/1.1/'}
-        
-        # 最初のitemのdc:dateを取得
         item = root.find('.//item')
         if item is not None:
             date_str = get_text_from_element(item, 'dc:date', namespaces)
-            if not date_str:
-                 date_str = get_text_from_element(item, 'pubDate', namespaces)
+            if not date_str: date_str = get_text_from_element(item, 'pubDate', namespaces)
             return date_str
-            
-    except:
-        pass
+    except: pass
         
-    # jproで見つからなければ通常検索で再トライ
+    # jpro以外で再トライ
     if "dpid" in params:
         del params["dpid"]
         try:
@@ -159,9 +143,7 @@ def fetch_date_ndl(title, next_vol):
             item = root.find('.//item')
             if item is not None:
                 return get_text_from_element(item, 'dc:date', namespaces)
-        except:
-            pass
-            
+        except: pass
     return None
 
 
@@ -185,9 +167,8 @@ with st.sidebar:
         ["➕ 漫画登録", "🏆 全件リスト", "🆕 新着ビュー", "🔖 未読・欲しい", "💎 完結＆高評価", "🎨 ジャンル別"]
     )
     st.divider()
-    st.caption("Data Source: 国立国会図書館サーチ (NDL Search)")
+    st.caption("Data Source: 国立国会図書館サーチ")
 
-# --- 共通関数: データ更新 ---
 def update_data(edited_df):
     updated_list = edited_df.to_dict(orient="records")
     current_data_map = {d['id']: d for d in st.session_state.manga_data}
@@ -197,7 +178,6 @@ def update_data(edited_df):
     st.session_state.manga_data = list(current_data_map.values())
     save_data(st.session_state.manga_data)
 
-# --- カラム設定 ---
 common_column_config = {
     "image": st.column_config.ImageColumn("表紙", width="small"),
     "title": "タイトル",
@@ -211,21 +191,16 @@ common_column_config = {
     "id": None, "author": None, "publisher": None, "isbn": None, "genre": None
 }
 
-
 # --- 1. 漫画登録 ---
 if view_mode == "➕ 漫画登録":
     st.header("漫画登録")
     
-    # --- 検索エリア ---
     with st.container():
-        # タイトルと検索ボタンのカラム
         col_s1, col_s2 = st.columns([3, 1])
         
         with col_s1:
             search_query = st.text_input("タイトル検索 (NDL)", placeholder="例: 呪術廻戦", key="s_in")
             
-            # フィルタ選択（ラジオボタン）を追加
-            # 1=本(漫画), 9=映像(アニメ), ''=すべて
             filter_label = st.radio(
                 "検索フィルタ:",
                 ["漫画・書籍 (Books)", "アニメ・映像 (Video)", "すべて"],
@@ -234,24 +209,20 @@ if view_mode == "➕ 漫画登録":
                 key="search_filter_radio"
             )
             
-            # 選択肢をAPIパラメータに変換
+            # APIパラメータ設定
             if "漫画" in filter_label:
-                media_type_code = '1'
-            elif "アニメ" in filter_label:
-                media_type_code = '9'
+                media_type_code = '1' # 書籍 + ISBNフィルタ有効
             else:
-                media_type_code = ''
+                media_type_code = ''  # 指定なし（アニメなどはここで拾う）
 
         with col_s2:
             st.write("")
             st.write("")
-            # 検索ボタン
             search_clicked = st.button("🔍 検索", type="primary")
 
         if search_clicked and search_query:
-            with st.spinner('国立国会図書館サーチで検索中...'):
+            with st.spinner('検索中...'):
                 st.session_state.selected_book = None
-                # NDL一本で検索（フィルタ適用）
                 results = search_ndl(search_query, media_type=media_type_code)
                 st.session_state.search_results = results
                 if not results: st.warning("見つかりませんでした。")
@@ -262,7 +233,7 @@ if view_mode == "➕ 漫画登録":
             if sel != "(選択してください)":
                 st.session_state.selected_book = st.session_state.search_results[opts.index(sel)-1]
 
-    # --- 入力フォーム ---
+    # 入力フォーム
     init = {"title":"", "image":"", "author":"", "publisher":"", "isbn":"", "link":""}
     if st.session_state.selected_book: init = st.session_state.selected_book
 
@@ -292,7 +263,6 @@ if view_mode == "➕ 漫画登録":
             else: st.info("No Image")
 
         if st.form_submit_button("追加") and title:
-            # 発売日自動取得 (NDL)
             if not date:
                 next_v = vol + 1
                 fetched = fetch_date_ndl(title, next_v)
@@ -316,8 +286,7 @@ if view_mode == "➕ 漫画登録":
             st.session_state.selected_book = None
             st.rerun()
 
-
-# --- ビュー定義 (全件リスト等) ---
+# --- ビュー定義 (各リスト) ---
 if view_mode == "🏆 全件リスト":
     st.header("🏆 全件リスト")
     if st.session_state.manga_data:
