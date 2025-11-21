@@ -41,13 +41,20 @@ def search_rakuten_books(query, app_id, genre_id="001001"):
     if not query or not app_id:
         return []
 
+    # 登録済みのISBNリストを作成（重複除外用）
+    registered_isbns = set()
+    if 'manga_data' in st.session_state:
+        for d in st.session_state.manga_data:
+            if d.get('isbn'):
+                registered_isbns.add(d['isbn'])
+
     url = "https://app.rakuten.co.jp/services/api/BooksTotal/Search/20170404"
     
     params = {
         "applicationId": app_id,
         "keyword": query,
-        "hits": 20,
-        "sort": "standard"
+        "hits": 30,            # 登録済みを除外するので少し多めに取得
+        "sort": "+releaseDate" # 発売日が古い順（1巻から並ぶように設定）
     }
     
     if genre_id:
@@ -62,7 +69,13 @@ def search_rakuten_books(query, app_id, genre_id="001001"):
             for item in data["Items"]:
                 info = item.get("Item", {})
                 title = info.get("title", "")
+                isbn = info.get("isbn", "")
                 
+                # 登録済みチェック: ISBNが一致するものはスキップ
+                if isbn and isbn in registered_isbns:
+                    continue
+
+                # 結果リスト内での重複排除
                 if title and not any(r['title'] == title for r in results):
                     results.append({
                         "title": title,
@@ -70,7 +83,7 @@ def search_rakuten_books(query, app_id, genre_id="001001"):
                         "publisher": info.get("publisherName", ""),
                         "image": info.get("largeImageUrl", ""),
                         "link": info.get("itemUrl", ""),
-                        "isbn": info.get("isbn", ""),
+                        "isbn": isbn,
                         "source": "Rakuten"
                     })
         return results
@@ -205,7 +218,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                 st.session_state.selected_book = None
                 results = search_rakuten_books(search_query, rakuten_app_id, genre_id)
                 st.session_state.search_results = results
-                if not results: st.warning("見つかりませんでした。")
+                if not results: st.warning("見つかりませんでした（すべて登録済みか、該当なし）。")
 
         if st.session_state.search_results:
             opts = ["(選択してください)"] + [f"{r['title']} - {r['author']}" for r in st.session_state.search_results]
@@ -304,8 +317,6 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
 
 
 # --- その他のビュー (表形式等は維持) ---
-# ※以下は表形式で見たい時用に残しておきます
-
 common_column_config = {
     "image": st.column_config.ImageColumn("表紙", width="small"),
     "title": "タイトル",
