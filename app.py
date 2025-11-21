@@ -43,10 +43,15 @@ def get_text_from_element(element, tag, namespaces):
     found = element.find(tag, namespaces)
     return found.text if found is not None else ""
 
-def search_ndl(query):
+def search_ndl(query, media_type='1'):
     """
     国立国会図書館サーチ OpenSearch API で検索
     Endpoint: https://ndlsearch.ndl.go.jp/api/opensearch
+    
+    media_type:
+        '1': 本 (Books) -> 漫画はここ
+        '9': 映像 (Video) -> アニメはここ
+        '': すべて
     """
     if not query: return []
     
@@ -56,6 +61,10 @@ def search_ndl(query):
         "title": query,
         "cnt": 20,
     }
+    
+    # メディアタイプ指定がある場合のみ追加
+    if media_type:
+        params["mediatype"] = media_type
     
     results = []
     try:
@@ -80,11 +89,9 @@ def search_ndl(query):
             publisher = get_text_from_element(item, 'dc:publisher', namespaces)
             link = get_text_from_element(item, 'link', namespaces)
             
-            # ISBNの取得 (dc:identifier xsi:type="dc:ISBN" のような形だが、テキスト解析で簡易取得)
-            # NDLのRSSでは <dc:identifier xsi:type="dc:ISBN">9784...</dc:identifier> となる
+            # ISBNの取得
             isbn = ""
             for ident in item.findall('dc:identifier', namespaces):
-                # identifierのテキストが13桁または10桁の数字っぽいならISBNとみなす簡易ロジック
                 val = ident.text.replace('-', '') if ident.text else ""
                 if val.isdigit() and (len(val) == 13 or len(val) == 10):
                     isbn = val
@@ -109,7 +116,6 @@ def search_ndl(query):
                 
         return results
     except Exception as e:
-        # st.error(f"NDL検索エラー: {e}") # デバッグ用
         return []
 
 def fetch_date_ndl(title, next_vol):
@@ -135,8 +141,7 @@ def fetch_date_ndl(title, next_vol):
         # 最初のitemのdc:dateを取得
         item = root.find('.//item')
         if item is not None:
-            # 日付形式は YYYY-MM-DD だったり YYYY年MM月... だったりする
-            date_str = get_text_from_element(item, 'dc:date', namespaces) # または pubDate
+            date_str = get_text_from_element(item, 'dc:date', namespaces)
             if not date_str:
                  date_str = get_text_from_element(item, 'pubDate', namespaces)
             return date_str
@@ -213,13 +218,41 @@ if view_mode == "➕ 漫画登録":
     
     # --- 検索エリア ---
     with st.container():
-        c1, c2 = st.columns([3, 1])
-        search_query = c1.text_input("タイトル検索 (NDL)", placeholder="例: 呪術廻戦", key="s_in")
-        if c2.button("🔍 検索", type="primary") and search_query:
+        # タイトルと検索ボタンのカラム
+        col_s1, col_s2 = st.columns([3, 1])
+        
+        with col_s1:
+            search_query = st.text_input("タイトル検索 (NDL)", placeholder="例: 呪術廻戦", key="s_in")
+            
+            # フィルタ選択（ラジオボタン）を追加
+            # 1=本(漫画), 9=映像(アニメ), ''=すべて
+            filter_label = st.radio(
+                "検索フィルタ:",
+                ["漫画・書籍 (Books)", "アニメ・映像 (Video)", "すべて"],
+                index=0,
+                horizontal=True,
+                key="search_filter_radio"
+            )
+            
+            # 選択肢をAPIパラメータに変換
+            if "漫画" in filter_label:
+                media_type_code = '1'
+            elif "アニメ" in filter_label:
+                media_type_code = '9'
+            else:
+                media_type_code = ''
+
+        with col_s2:
+            st.write("")
+            st.write("")
+            # 検索ボタン
+            search_clicked = st.button("🔍 検索", type="primary")
+
+        if search_clicked and search_query:
             with st.spinner('国立国会図書館サーチで検索中...'):
                 st.session_state.selected_book = None
-                # NDL一本で検索
-                results = search_ndl(search_query)
+                # NDL一本で検索（フィルタ適用）
+                results = search_ndl(search_query, media_type=media_type_code)
                 st.session_state.search_results = results
                 if not results: st.warning("見つかりませんでした。")
 
