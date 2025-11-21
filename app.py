@@ -40,48 +40,53 @@ def save_data(data):
 def normalize_title(title):
     """
     タイトルから巻数や補足情報を強力に除去してシリーズ名を抽出する
+    (1), （１）, 1巻, Vol.1, 途中にある数字などを削除
     """
     if not title: return ""
     
     # 1. NFKC正規化（全角英数字を半角に、濁点などを統合）
     title = unicodedata.normalize('NFKC', title)
     
-    # 2. 具体的な巻数パターンの削除
-    # 繰り返し適用して、"Title 26 (1)" のようなケースも "Title" にする
+    # 2. 明示的な巻数パターンを削除（場所を問わず削除）
+    # 例: "タイトル(1)特装版" -> "タイトル特装版"
     patterns = [
-        r'\s*\(\d+\)$',          # (1)
-        r'\s*\[\d+\]$',          # [1]
-        r'\s*<\d+>$',            # <1>
-        r'\s*第\d+巻$',          # 第1巻
-        r'\s*第\d+集$',          # 第1集
-        r'\s*\d+巻$',            # 1巻
-        r'\s*Vol\.?\s*\d+$',     # Vol.1, Vol 1
-        r'\s*Volume\.?\s*\d+$',  # Volume 1
-        r'\s*#\d+$',             # #1
-        r'\s+\d+$',              # 末尾のスペース+数字 ("呪術廻戦 26")
+        r'\s*\(\d+\)',          # (1)
+        r'\s*\[\d+\]',          # [1]
+        r'\s*<\d+>',            # <1>
+        r'\s*第\d+巻',          # 第1巻
+        r'\s*第\d+集',          # 第1集
+        r'\s*\d+巻',            # 1巻
+        r'\s*Vol\.?\s*\d+',     # Vol.1
+        r'\s*Volume\.?\s*\d+',  # Volume 1
+        r'\s*#\d+',             # #1
     ]
     
-    # 念のためループで完全に消す
-    for _ in range(3): # 3回くらい回せば複合パターンも消える
-        original = title
-        for pattern in patterns:
-            title = re.sub(pattern, '', title, flags=re.IGNORECASE)
-        if original == title:
-            break
-            
-    return title.strip()
+    for pattern in patterns:
+        title = re.sub(pattern, ' ', title, flags=re.IGNORECASE)
+
+    # 3. 独立した数字の削除（スペースに挟まれた数字など）
+    # 例: "タイトル 10 特装版" -> "タイトル  特装版"
+    # 末尾の数字も削除
+    title = re.sub(r'\s+\d+(\s|$)', ' ', title)
+    
+    # 4. 余分なスペースを整理
+    title = re.sub(r'\s+', ' ', title).strip()
+    
+    return title
 
 def extract_volume(title):
-    """タイトルから巻数を抽出する"""
+    """タイトルから巻数を抽出する（途中にあるものも含む）"""
     if not title: return 1
     title_norm = unicodedata.normalize('NFKC', title)
     
+    # 優先度順にパターンマッチ
     patterns = [
-        r'(\d+)\s*$',           
-        r'[\(\[\<](\d+)[\)\]\>]\s*$', 
         r'第(\d+)巻',
-        r'\d+巻',               
+        r'\d+巻',
         r'Vol\.?(\d+)',
+        r'[\(\[\<](\d+)[\)\]\>]', # (数字)
+        r'\s(\d+)\s',             # スペースに挟まれた数字 "Title 10 Special"
+        r'(\d+)$',                # 末尾の数字
     ]
     
     for pattern in patterns:
@@ -400,7 +405,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                             else:
                                 st.caption("No Image")
                             
-                            # 編集ボタン (番号などは表示せず「編集」のみ)
+                            # 編集ボタン
                             if st.button("編集", key=f"ve_{row['id']}"):
                                 edit_dialog(row.to_dict())
 
