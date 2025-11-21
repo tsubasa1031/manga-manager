@@ -40,18 +40,14 @@ def save_data(data):
 def normalize_title(title):
     """
     タイトルから巻数や補足情報を強力に除去してシリーズ名を抽出する
-    (1), （１）, 1巻, Vol.1, 末尾の数字などを削除
     """
     if not title: return ""
     
     # 1. NFKC正規化（全角英数字を半角に、濁点などを統合）
-    # これにより （１） -> (1) になる
     title = unicodedata.normalize('NFKC', title)
     
-    # 2. 不要な空白を除去
-    title = title.strip()
-
-    # 3. 具体的なパターン削除（正規表現）
+    # 2. 具体的な巻数パターンの削除
+    # 繰り返し適用して、"Title 26 (1)" のようなケースも "Title" にする
     patterns = [
         r'\s*\(\d+\)$',          # (1)
         r'\s*\[\d+\]$',          # [1]
@@ -65,14 +61,14 @@ def normalize_title(title):
         r'\s+\d+$',              # 末尾のスペース+数字 ("呪術廻戦 26")
     ]
     
-    for pattern in patterns:
-        # 繰り返し適用することで "Title 26 (1)" のような複合パターンにも対応
-        before = title
-        title = re.sub(pattern, '', title, flags=re.IGNORECASE)
-        # 変化しなくなるまでやる（念のため）
-        if before != title:
-            title = title.strip()
-    
+    # 念のためループで完全に消す
+    for _ in range(3): # 3回くらい回せば複合パターンも消える
+        original = title
+        for pattern in patterns:
+            title = re.sub(pattern, '', title, flags=re.IGNORECASE)
+        if original == title:
+            break
+            
     return title.strip()
 
 def extract_volume(title):
@@ -276,7 +272,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
     with st.form("reg"):
         c1, c2 = st.columns([2, 1])
         with c1:
-            st.caption("※自動的に正規化されたシリーズ名で登録されます")
+            st.caption("※シリーズ名として登録されます")
             title = st.text_input("タイトル (シリーズ名)", init["title"])
             
             r1, r2, r3 = st.columns(3)
@@ -296,9 +292,10 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
             else: st.info("No Image")
 
         if st.form_submit_button("追加") and title:
+            # 手動入力の場合もAPIで補完を試みる
             if not date and rakuten_app_id:
                 next_v = vol + 1
-                fetched = fetch_date_rakuten(title, next_v, rakuten_app_id) # fetch_date_rakuten未定義のためskip
+                fetched = fetch_date_rakuten(title, next_v, rakuten_app_id) # 未定義ならskip
             
             new_d = {
                 "id": datetime.now().strftime("%Y%m%d%H%M%S"),
@@ -322,7 +319,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
     if st.session_state.manga_data:
         df = pd.DataFrame(st.session_state.manga_data)
         
-        # 強力な正規化タイトルでグループ化
+        # 正規化タイトルでグループ化
         df['series_key'] = df['title'].apply(normalize_title)
         
         series_groups = []
@@ -353,7 +350,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
         for i, series in enumerate(series_groups):
             col = cols[i % cols_per_row]
             with col:
-                # シリーズ代表画像 (クリックで楽天へ)
+                # シリーズ代表画像
                 if series['image']:
                     link_target = series['link'] if series['link'] else "#"
                     st.markdown(f"[![{series['title']}]({series['image']})]({link_target})", unsafe_allow_html=True)
@@ -394,8 +391,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                     st.divider()
 
                     # --- フォルダ内：表紙をグリッドで並べる ---
-                    # ここを本棚形式に変更
-                    vol_cols = st.columns(4) # フォルダ内は4列
+                    vol_cols = st.columns(4)
                     for j, (idx, row) in enumerate(series['df'].iterrows()):
                         with vol_cols[j % 4]:
                             # 表紙
@@ -404,8 +400,8 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                             else:
                                 st.caption("No Image")
                             
-                            # Volボタン (編集用)
-                            if st.button(f"Vol.{row['volume']}", key=f"ve_{row['id']}"):
+                            # 編集ボタン (番号などは表示せず「編集」のみ)
+                            if st.button("編集", key=f"ve_{row['id']}"):
                                 edit_dialog(row.to_dict())
 
     else:
