@@ -376,7 +376,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                                 "id": datetime.now().strftime("%Y%m%d%H%M%S"),
                                 "title": series['title'],
                                 "volume": next_vol_num,
-                                "status": "want",
+                                "status": "own",
                                 "my_score": 0,
                                 "genre": base.get("genre", ""),
                                 "is_finished": False,
