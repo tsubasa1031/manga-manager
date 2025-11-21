@@ -3,7 +3,6 @@ import pandas as pd
 import json
 import os
 import requests
-import xml.etree.ElementTree as ET
 from datetime import datetime
 
 # --- 設定 ---
@@ -36,114 +35,82 @@ def save_data(data):
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
-# --- 国立国会図書館 (NDL) API 関連関数 ---
+# --- 楽天ブックスAPI 関連関数 ---
 
-def get_text_from_element(element, tag, namespaces):
-    """XML要素からテキストを取得するヘルパー関数"""
-    found = element.find(tag, namespaces)
-    return found.text if found is not None else ""
+def search_rakuten_books(query, app_id, genre_id="001001"):
+    """
+    楽天ブックスAPIで検索
+    genre_id:
+        '001001': 漫画 (コミック)
+        '001': 本 (書籍全般)
+        '003': DVD/Blu-ray (アニメ等)
+        '006': ゲーム
+        '': すべて
+    """
+    if not query or not app_id:
+        return []
 
-def search_ndl(query, media_type='1'):
-    """
-    国立国会図書館サーチ OpenSearch API で検索
-    Endpoint: https://ndlsearch.ndl.go.jp/api/opensearch
+    url = "https://app.rakuten.co.jp/services/api/BooksTotal/Search/20170404"
     
-    media_type:
-        '1': 本 (Books) -> 漫画はこれ + ISBNフィルタ
-        '': すべて (アニメDVDなどはここ)
-    """
-    if not query: return []
-    
-    url = "https://ndlsearch.ndl.go.jp/api/opensearch"
     params = {
-        "title": query,
-        "cnt": 20,
+        "applicationId": app_id,
+        "keyword": query, # titleではなくkeywordにすることで広く検索
+        "hits": 20,
+        "sort": "standard"
     }
     
-    # メディアタイプ指定がある場合のみ追加
-    if media_type:
-        params["mediatype"] = media_type
-    
+    # ジャンル指定がある場合
+    if genre_id:
+        params["booksGenreId"] = genre_id
+
     results = []
     try:
         response = requests.get(url, params=params)
-        root = ET.fromstring(response.content)
+        data = response.json()
         
-        namespaces = {
-            'dc': 'http://purl.org/dc/elements/1.1/',
-            'openSearch': 'http://a9.com/-/spec/opensearchrss/1.0/',
-            'rdfs': 'http://www.w3.org/2000/01/rdf-schema#'
-        }
-        
-        for item in root.findall('.//item'):
-            title = get_text_from_element(item, 'title', namespaces)
-            author = get_text_from_element(item, 'author', namespaces)
-            if not author:
-                author = get_text_from_element(item, 'dc:creator', namespaces)
+        if "Items" in data:
+            for item in data["Items"]:
+                info = item.get("Item", {})
+                title = info.get("title", "")
                 
-            publisher = get_text_from_element(item, 'dc:publisher', namespaces)
-            link = get_text_from_element(item, 'link', namespaces)
-            
-            # ISBN取得
-            isbn = ""
-            for ident in item.findall('dc:identifier', namespaces):
-                val = ident.text.replace('-', '') if ident.text else ""
-                if val.isdigit() and (len(val) == 13 or len(val) == 10):
-                    isbn = val
-                    break
-            
-            # 【重要】フィルタリング処理
-            # 「漫画・書籍」モード('1')の場合、ISBNがないアイテム（CDやグッズ等）は除外する
-            if media_type == '1' and not isbn:
-                continue
-            
-            if title and not any(r['title'] == title for r in results):
-                thumbnail = ""
-                if isbn:
-                    thumbnail = f"https://ndlsearch.ndl.go.jp/thumbnail/{isbn}.jpg"
-                
-                results.append({
-                    "title": title,
-                    "author": author,
-                    "publisher": publisher,
-                    "thumbnail": thumbnail,
-                    "link": link,
-                    "isbn": isbn,
-                    "source": "NDL"
-                })
-                
+                # 重複排除
+                if title and not any(r['title'] == title for r in results):
+                    results.append({
+                        "title": title,
+                        "author": info.get("author", "不明"),
+                        "publisher": info.get("publisherName", ""),
+                        "thumbnail": info.get("largeImageUrl", ""), # 高画質画像
+                        "link": info.get("itemUrl", ""),
+                        "isbn": info.get("isbn", ""), # JANコードなどもここに入る場合あり
+                        "source": "Rakuten"
+                    })
         return results
     except Exception as e:
         return []
 
-def fetch_date_ndl(title, next_vol):
-    """次巻の発売日検索 (JPRO優先)"""
-    url = "https://ndlsearch.ndl.go.jp/api/opensearch"
-    query = f"{title} {next_vol}"
-    params = {"title": query, "cnt": 1, "dpid": "jpro"}
+def fetch_date_rakuten(title, next_vol, app_id):
+    """
+    楽天APIで次巻の発売日を探す
+    漫画ジャンル(001001)で、発売日が新しい順にソートして検索
+    """
+    if not app_id: return None
     
+    url = "https://app.rakuten.co.jp/services/api/BooksBook/Search/20170404"
+    params = {
+        "applicationId": app_id,
+        "title": f"{title} {next_vol}", # タイトル + 巻数
+        "booksGenreId": "001001",      # 漫画に限定
+        "hits": 1,
+        "sort": "-releaseDate"         # 新しい順
+    }
     try:
         response = requests.get(url, params=params)
-        root = ET.fromstring(response.content)
-        namespaces = {'dc': 'http://purl.org/dc/elements/1.1/'}
-        item = root.find('.//item')
-        if item is not None:
-            date_str = get_text_from_element(item, 'dc:date', namespaces)
-            if not date_str: date_str = get_text_from_element(item, 'pubDate', namespaces)
-            return date_str
-    except: pass
-        
-    # jpro以外で再トライ
-    if "dpid" in params:
-        del params["dpid"]
-        try:
-            response = requests.get(url, params=params)
-            root = ET.fromstring(response.content)
-            namespaces = {'dc': 'http://purl.org/dc/elements/1.1/'}
-            item = root.find('.//item')
-            if item is not None:
-                return get_text_from_element(item, 'dc:date', namespaces)
-        except: pass
+        data = response.json()
+        if "Items" in data and len(data["Items"]) > 0:
+            # 楽天の日付形式: "2023年10月04日" や "2023年10月"
+            return data["Items"][0]["Item"].get("salesDate")
+    except:
+        pass
     return None
 
 
@@ -167,8 +134,15 @@ with st.sidebar:
         ["➕ 漫画登録", "🏆 全件リスト", "🆕 新着ビュー", "🔖 未読・欲しい", "💎 完結＆高評価", "🎨 ジャンル別"]
     )
     st.divider()
-    st.caption("Data Source: 国立国会図書館サーチ")
+    st.header("⚙️ 設定")
+    st.markdown("""
+    検索には**楽天ウェブサービス**のApp IDが必要です。
+    [こちらから発行](https://webservice.rakuten.co.jp/) (無料)
+    """)
+    rakuten_app_id = st.text_input("楽天 Application ID", type="password")
+    st.caption("Data Source: Rakuten Books API")
 
+# --- 共通関数: データ更新 ---
 def update_data(edited_df):
     updated_list = edited_df.to_dict(orient="records")
     current_data_map = {d['id']: d for d in st.session_state.manga_data}
@@ -178,6 +152,7 @@ def update_data(edited_df):
     st.session_state.manga_data = list(current_data_map.values())
     save_data(st.session_state.manga_data)
 
+# --- カラム設定 ---
 common_column_config = {
     "image": st.column_config.ImageColumn("表紙", width="small"),
     "title": "タイトル",
@@ -195,39 +170,44 @@ common_column_config = {
 if view_mode == "➕ 漫画登録":
     st.header("漫画登録")
     
+    if not rakuten_app_id:
+        st.warning("⚠️ サイドバーで楽天Application IDを設定してください。")
+
     with st.container():
         col_s1, col_s2 = st.columns([3, 1])
         
         with col_s1:
-            search_query = st.text_input("タイトル検索 (NDL)", placeholder="例: 呪術廻戦", key="s_in")
+            search_query = st.text_input("タイトル検索 (楽天)", placeholder="例: 呪術廻戦", key="s_in")
             
-            filter_label = st.radio(
-                "検索フィルタ:",
-                ["漫画・書籍 (Books)", "アニメ・映像 (Video)", "すべて"],
+            # 楽天ブックスAPI用のジャンルフィルタ
+            filter_option = st.radio(
+                "検索ジャンル:",
+                ["漫画 (Comic)", "書籍 (Books)", "アニメ (DVD/BD)", "ゲーム (Game)", "すべて"],
                 index=0,
-                horizontal=True,
-                key="search_filter_radio"
+                horizontal=True
             )
             
-            # APIパラメータ設定
-            if "漫画" in filter_label:
-                media_type_code = '1' # 書籍 + ISBNフィルタ有効
-            else:
-                media_type_code = ''  # 指定なし（アニメなどはここで拾う）
+            # ジャンルIDへのマッピング
+            if "漫画" in filter_option: genre_id = "001001"
+            elif "書籍" in filter_option: genre_id = "001"
+            elif "アニメ" in filter_option: genre_id = "003" # DVD/Blu-ray
+            elif "ゲーム" in filter_option: genre_id = "006"
+            else: genre_id = ""
 
         with col_s2:
             st.write("")
             st.write("")
-            search_clicked = st.button("🔍 検索", type="primary")
+            search_clicked = st.button("🔍 検索", type="primary", disabled=not rakuten_app_id)
 
-        if search_clicked and search_query:
-            with st.spinner('検索中...'):
+        if search_clicked and search_query and rakuten_app_id:
+            with st.spinner('楽天ブックスで検索中...'):
                 st.session_state.selected_book = None
-                results = search_ndl(search_query, media_type=media_type_code)
+                results = search_rakuten_books(search_query, rakuten_app_id, genre_id)
                 st.session_state.search_results = results
                 if not results: st.warning("見つかりませんでした。")
 
         if st.session_state.search_results:
+            # リスト表示を見やすく
             opts = ["(選択してください)"] + [f"{r['title']} - {r['author']}" for r in st.session_state.search_results]
             sel = st.selectbox("候補を選択", opts, key="s_sel")
             if sel != "(選択してください)":
@@ -250,7 +230,7 @@ if view_mode == "➕ 漫画登録":
             
             r4, r5 = st.columns(2)
             genre = r4.text_input("ジャンル", placeholder="少年, アクション")
-            date = r5.text_input("次巻発売日", placeholder="YYYY-MM-DD")
+            date = r5.text_input("次巻発売日", placeholder="YYYY年MM月DD日")
             
             r6, r7 = st.columns(2)
             f_chk = r6.checkbox("完結済み")
@@ -263,9 +243,10 @@ if view_mode == "➕ 漫画登録":
             else: st.info("No Image")
 
         if st.form_submit_button("追加") and title:
-            if not date:
+            # 発売日自動取得 (楽天)
+            if not date and rakuten_app_id:
                 next_v = vol + 1
-                fetched = fetch_date_ndl(title, next_v)
+                fetched = fetch_date_rakuten(title, next_v, rakuten_app_id)
                 if fetched: 
                     date = fetched
                     st.success(f"発売日発見: {fetched}")
@@ -286,7 +267,8 @@ if view_mode == "➕ 漫画登録":
             st.session_state.selected_book = None
             st.rerun()
 
-# --- ビュー定義 (各リスト) ---
+
+# --- ビュー定義 ---
 if view_mode == "🏆 全件リスト":
     st.header("🏆 全件リスト")
     if st.session_state.manga_data:
