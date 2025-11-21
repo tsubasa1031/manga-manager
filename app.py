@@ -115,7 +115,7 @@ with st.sidebar:
     st.title("📚 メニュー")
     view_mode = st.radio(
         "表示モード",
-        ["➕ 漫画登録", "🏆 全件リスト", "🆕 新着ビュー", "🔖 未読・欲しい", "💎 完結＆高評価", "🎨 ジャンル別"]
+        ["➕ 漫画登録＆ライブラリ", "🏆 全件リスト(表形式)", "🆕 新着ビュー", "🔖 未読・欲しい", "💎 完結＆高評価", "🎨 ジャンル別"]
     )
     st.divider()
     st.header("⚙️ 設定")
@@ -136,40 +136,59 @@ def update_data(edited_df):
     st.session_state.manga_data = list(current_data_map.values())
     save_data(st.session_state.manga_data)
 
-# --- カラム設定 ---
-common_column_config = {
-    "image": st.column_config.ImageColumn("表紙", width="small"),
-    "title": "タイトル",
-    "volume": st.column_config.NumberColumn("巻数", format="%d巻", width="small"),
-    "releaseDate": st.column_config.TextColumn("発売日", width="small"),
-    "status": st.column_config.SelectboxColumn("状態", options=["own", "want"], width="small"),
-    "my_score": st.column_config.NumberColumn("評価", format="%d⭐"),
-    "is_finished": st.column_config.CheckboxColumn("完結", width="small"),
-    "is_unread": st.column_config.CheckboxColumn("未読", width="small"),
-    "link": st.column_config.LinkColumn("Link"),
-    "id": None, "author": None, "publisher": None, "isbn": None, "genre": None
-}
+# --- 共通関数: 1冊の詳細編集ダイアログ ---
+@st.dialog("詳細編集")
+def edit_dialog(item):
+    with st.form(f"edit_form_{item['id']}"):
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            if item.get("image"):
+                st.image(item["image"], width=100)
+            else:
+                st.write("No Image")
+        with col2:
+            new_title = st.text_input("タイトル", item["title"])
+            new_vol = st.number_input("巻数", value=item["volume"], step=1)
+            new_status = st.selectbox("状態", ["own", "want"], index=0 if item["status"]=="own" else 1)
+            new_score = st.slider("評価", 0, 5, item["my_score"])
+            new_date = st.text_input("発売日", item["releaseDate"])
+            new_unread = st.checkbox("未読", item["is_unread"])
+            
+            if st.form_submit_button("更新"):
+                # データ更新処理
+                for d in st.session_state.manga_data:
+                    if d['id'] == item['id']:
+                        d['title'] = new_title
+                        d['volume'] = new_vol
+                        d['status'] = new_status
+                        d['my_score'] = new_score
+                        d['releaseDate'] = new_date
+                        d['is_unread'] = new_unread
+                        break
+                save_data(st.session_state.manga_data)
+                st.rerun()
+            
+            if st.form_submit_button("削除", type="primary"):
+                st.session_state.manga_data = [d for d in st.session_state.manga_data if d['id'] != item['id']]
+                save_data(st.session_state.manga_data)
+                st.rerun()
 
-# --- 1. 漫画登録 ---
-if view_mode == "➕ 漫画登録":
+# --- メインビュー: 漫画登録 ＆ ギャラリー ---
+if view_mode == "➕ 漫画登録＆ライブラリ":
     st.header("漫画登録")
     
     if not rakuten_app_id:
         st.warning("⚠️ サイドバーで楽天Application IDを設定してください。")
 
+    # --- 1. 登録フォームエリア ---
     with st.container():
         col_s1, col_s2 = st.columns([3, 1])
-        
         with col_s1:
             search_query = st.text_input("タイトル検索 (楽天)", placeholder="例: 呪術廻戦", key="s_in")
-            
             filter_option = st.radio(
-                "検索ジャンル:",
-                ["漫画 (Comic)", "書籍 (Books)", "アニメ (DVD/BD)", "ゲーム (Game)", "すべて"],
-                index=0,
-                horizontal=True
+                "検索ジャンル:", ["漫画 (Comic)", "書籍 (Books)", "アニメ (DVD/BD)", "ゲーム (Game)", "すべて"],
+                index=0, horizontal=True
             )
-            
             if "漫画" in filter_option: genre_id = "001001"
             elif "書籍" in filter_option: genre_id = "001"
             elif "アニメ" in filter_option: genre_id = "003"
@@ -198,48 +217,35 @@ if view_mode == "➕ 漫画登録":
     if st.session_state.selected_book: init = st.session_state.selected_book
 
     with st.form("reg"):
-        st.subheader("詳細入力")
         c1, c2 = st.columns([2, 1])
-        
         with c1:
             title = st.text_input("タイトル", init["title"])
             r1, r2, r3 = st.columns(3)
             vol = r1.number_input("巻数", 1, step=1, value=1)
             status = r2.selectbox("状態", ["own", "want"])
             score = r3.slider("評価", 0, 5, 3)
-            
             r4, r5 = st.columns(2)
             genre = r4.text_input("ジャンル", placeholder="少年, アクション")
             date = r5.text_input("次巻発売日", placeholder="YYYY年MM月DD日")
-            
             r6, r7 = st.columns(2)
             f_chk = r6.checkbox("完結済み")
             u_chk = r7.checkbox("未読")
-            
-            st.caption(f"著者: {init['author']} / 出版社: {init['publisher']}")
-
         with c2:
-            if init.get("image"): 
-                st.image(init["image"], width=100)
-            else: 
-                st.info("No Image")
+            if init.get("image"): st.image(init["image"], width=100)
+            else: st.info("No Image")
 
         if st.form_submit_button("追加") and title:
             if not date and rakuten_app_id:
                 next_v = vol + 1
                 fetched = fetch_date_rakuten(title, next_v, rakuten_app_id)
-                if fetched: 
-                    date = fetched
-                    st.success(f"発売日発見: {fetched}")
-                else:
-                    st.warning("発売日が見つかりませんでした。")
-
+                if fetched: date = fetched
+            
             new_d = {
                 "id": datetime.now().strftime("%Y%m%d%H%M%S"),
                 "title": title, "volume": vol, "releaseDate": date, "status": status,
                 "my_score": score, "genre": genre, "is_finished": f_chk, "is_unread": u_chk,
-                "image": init.get("image", ""), "author": init.get("author", ""), "publisher": init.get("publisher", ""),
-                "isbn": init.get("isbn", ""), "link": init.get("link", "")
+                "image": init.get("image", ""), "author": init.get("author", ""),
+                "publisher": init.get("publisher", ""), "isbn": init.get("isbn", ""), "link": init.get("link", "")
             }
             st.session_state.manga_data.append(new_d)
             save_data(st.session_state.manga_data)
@@ -248,61 +254,84 @@ if view_mode == "➕ 漫画登録":
             st.session_state.selected_book = None
             st.rerun()
 
-
-# --- ビュー定義 ---
-if view_mode == "🏆 全件リスト":
-    st.header("🏆 全件リスト")
+    st.divider()
     
+    # --- 2. ギャラリー（本棚）表示エリア ---
+    st.subheader("📚 本棚 (シリーズ別)")
+
     if st.session_state.manga_data:
         df = pd.DataFrame(st.session_state.manga_data)
         
-        # 表示形式の切り替え
-        list_style = st.radio("表示形式", ["📂 シリーズ別 (フォルダ)", "📄 フラット (全件表示)"], horizontal=True)
+        # シリーズ（タイトル）ごとにグループ化
+        titles = df['title'].unique()
+        # タイトルごとの最新更新日時やIDでソートする（最近いじった本を上に）
+        series_list = []
+        for t in titles:
+            s_df = df[df['title'] == t]
+            max_id = s_df['id'].max() # 一番新しい操作日時
+            series_list.append((t, max_id))
+        
+        # 新しい順にソート
+        series_list.sort(key=lambda x: x[1], reverse=True)
 
-        if "シリーズ別" in list_style:
-            # シリーズごとにグループ化
-            titles = df['title'].unique()
-            # シリーズの並び順（ID順＝追加順でソート）
-            # 各タイトルの最初のデータのIDを取得してソート
-            series_order = []
-            for t in titles:
-                first_id = df[df['title'] == t]['id'].min()
-                series_order.append((t, first_id))
-            # IDの昇順（古い順）＝追加順
-            series_order.sort(key=lambda x: x[1])
+        for title, _ in series_list:
+            series_df = df[df['title'] == title].sort_values("volume")
+            count = len(series_df)
             
-            for title, _ in series_order:
-                series_df = df[df['title'] == title].sort_values("volume")
-                vol_count = len(series_df)
-                min_vol = series_df['volume'].min()
-                max_vol = series_df['volume'].max()
+            # フォルダ（Expander）を作成
+            with st.expander(f"📂 {title} ({count}冊)"):
+                # グリッド表示のための列作成 (例: 6列)
+                cols = st.columns(6)
                 
-                # フォルダ（Expander）表示
-                with st.expander(f"📂 {title} (Vol.{min_vol} - {max_vol}) : 全{vol_count}冊"):
-                    edited_series = st.data_editor(
-                        series_df,
-                        column_config=common_column_config,
-                        use_container_width=True,
-                        hide_index=True,
-                        key=f"editor_series_{title}"
-                    )
-                    if not series_df.equals(edited_series):
-                        update_data(edited_series)
-                        st.rerun()
-        else:
-            # フラット表示：ID順（作成順）にソート（古い順＝新しいのが下）
-            df_s = df.sort_values("id", ascending=True)
-            e_df = st.data_editor(df_s, column_config=common_column_config, use_container_width=True, hide_index=True, key="e_all")
-            if not df_s.equals(e_df): update_data(e_df); st.rerun()
-            
+                for i, (index, row) in enumerate(series_df.iterrows()):
+                    col = cols[i % 6] # 列を循環させる
+                    with col:
+                        # 表紙表示
+                        if row.get("image"):
+                            st.image(row["image"], use_container_width=True)
+                        else:
+                            st.markdown("🚫 No Image")
+                        
+                        # 巻数表示
+                        st.caption(f"Vol.{row['volume']}")
+                        
+                        # 詳細・編集ボタン
+                        if st.button("詳細", key=f"btn_{row['id']}"):
+                            edit_dialog(row.to_dict())
+
     else:
-        st.info("データなし")
+        st.info("まだ漫画が登録されていません。上のフォームから追加してください。")
+
+
+# --- その他のビュー (表形式等は維持) ---
+# ※以下は表形式で見たい時用に残しておきます
+
+common_column_config = {
+    "image": st.column_config.ImageColumn("表紙", width="small"),
+    "title": "タイトル",
+    "volume": st.column_config.NumberColumn("巻数", format="%d巻", width="small"),
+    "releaseDate": st.column_config.TextColumn("発売日", width="small"),
+    "status": st.column_config.SelectboxColumn("状態", options=["own", "want"], width="small"),
+    "my_score": st.column_config.NumberColumn("評価", format="%d⭐"),
+    "is_finished": st.column_config.CheckboxColumn("完結", width="small"),
+    "is_unread": st.column_config.CheckboxColumn("未読", width="small"),
+    "link": st.column_config.LinkColumn("Link"),
+    "id": None, "author": None, "publisher": None, "isbn": None, "genre": None
+}
+
+if view_mode == "🏆 全件リスト(表形式)":
+    st.header("🏆 全件リスト")
+    if st.session_state.manga_data:
+        df = pd.DataFrame(st.session_state.manga_data)
+        df_s = df.sort_values(["my_score", "title"], ascending=[False, True])
+        e_df = st.data_editor(df_s, column_config=common_column_config, use_container_width=True, hide_index=True, key="e_all")
+        if not df_s.equals(e_df): update_data(e_df); st.rerun()
+    else: st.info("データなし")
 
 if view_mode == "🆕 新着ビュー":
     st.header("🆕 新着ビュー")
     if st.session_state.manga_data:
         df = pd.DataFrame(st.session_state.manga_data)
-        # 新しい順（降順）
         df_n = df.sort_values("id", ascending=False)
         e_df = st.data_editor(df_n, column_config=common_column_config, use_container_width=True, hide_index=True, key="e_new")
         if not df_n.equals(e_df): update_data(e_df); st.rerun()
