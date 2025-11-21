@@ -3,6 +3,7 @@ import pandas as pd
 import json
 import os
 import requests
+import re
 from datetime import datetime
 
 # --- 設定 ---
@@ -35,6 +36,23 @@ def save_data(data):
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
+def normalize_title(title):
+    """タイトルから巻数を除去してシリーズ名を抽出する"""
+    if not title: return ""
+    # 全角数字を半角に変換
+    title = title.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+    
+    # 末尾の巻数パターンを除去（例: "呪術廻戦 26", "ONE PIECE 100", "タイトル(3)"）
+    # 1. 末尾のスペース+数字
+    title = re.sub(r'\s*\d+$', '', title)
+    # 2. 末尾の(数字) または （数字）
+    title = re.sub(r'\s*\(\d+\)$', '', title)
+    title = re.sub(r'\s*（\d+）$', '', title)
+    # 3. 第N巻
+    title = re.sub(r'\s*第?\d+巻$', '', title)
+    
+    return title.strip()
+
 # --- 楽天ブックスAPI 関連関数 ---
 
 def search_rakuten_books(query, app_id, genre_id="001001"):
@@ -53,7 +71,7 @@ def search_rakuten_books(query, app_id, genre_id="001001"):
     params = {
         "applicationId": app_id,
         "keyword": query,
-        "hits": 30,            # 登録済みを除外するので少し多めに取得
+        "hits": 30,
         "sort": "+releaseDate" # 発売日が古い順（1巻から並ぶように設定）
     }
     
@@ -71,11 +89,9 @@ def search_rakuten_books(query, app_id, genre_id="001001"):
                 title = info.get("title", "")
                 isbn = info.get("isbn", "")
                 
-                # 登録済みチェック: ISBNが一致するものはスキップ
                 if isbn and isbn in registered_isbns:
                     continue
 
-                # 結果リスト内での重複排除
                 if title and not any(r['title'] == title for r in results):
                     results.append({
                         "title": title,
@@ -168,7 +184,6 @@ def edit_dialog(item):
             new_unread = st.checkbox("未読", item["is_unread"])
             
             if st.form_submit_button("更新"):
-                # データ更新処理
                 for d in st.session_state.manga_data:
                     if d['id'] == item['id']:
                         d['title'] = new_title
@@ -227,12 +242,16 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                 st.session_state.selected_book = st.session_state.search_results[opts.index(sel)-1]
 
     init = {"title":"", "image":"", "author":"", "publisher":"", "isbn":"", "link":""}
-    if st.session_state.selected_book: init = st.session_state.selected_book
+    if st.session_state.selected_book: 
+        init = st.session_state.selected_book
+        # 選択されたら、自動的にタイトルから巻数を削除して「シリーズ名」としてセット
+        init["title"] = normalize_title(init["title"])
 
     with st.form("reg"):
         c1, c2 = st.columns([2, 1])
         with c1:
-            title = st.text_input("タイトル", init["title"])
+            st.caption("※シリーズ名として登録します（巻数は削除推奨）")
+            title = st.text_input("タイトル (シリーズ名)", init["title"])
             r1, r2, r3 = st.columns(3)
             vol = r1.number_input("巻数", 1, step=1, value=1)
             status = r2.selectbox("状態", ["own", "want"])
@@ -270,47 +289,75 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
     st.divider()
     
     # --- 2. ギャラリー（本棚）表示エリア ---
-    st.subheader("📚 本棚 (シリーズ別)")
+    st.subheader("📚 本棚")
 
     if st.session_state.manga_data:
         df = pd.DataFrame(st.session_state.manga_data)
         
-        # シリーズ（タイトル）ごとにグループ化
-        titles = df['title'].unique()
-        # タイトルごとの最新更新日時やIDでソートする（最近いじった本を上に）
-        series_list = []
-        for t in titles:
-            s_df = df[df['title'] == t]
-            max_id = s_df['id'].max() # 一番新しい操作日時
-            series_list.append((t, max_id))
+        # シリーズ名（タイトルから巻数を除去）でグルーピング
+        # データ上のtitleが既にシリーズ名になっている場合はそのままだが、
+        # 過去データで巻数が入っている場合のためにnormalizeを適用してグルーピングキーを作る
+        df['series_key'] = df['title'].apply(normalize_title)
         
-        # 新しい順にソート
-        series_list.sort(key=lambda x: x[1], reverse=True)
-
-        for title, _ in series_list:
-            series_df = df[df['title'] == title].sort_values("volume")
-            count = len(series_df)
+        # シリーズごとのリストを作成
+        series_groups = []
+        for key, group in df.groupby('series_key'):
+            # そのシリーズの中で一番若い巻（通常1巻）の画像を探す
+            min_vol_row = group.loc[group['volume'].idxmin()]
+            cover_image = min_vol_row.get('image', '')
             
-            # フォルダ（Expander）を作成
-            with st.expander(f"📂 {title} ({count}冊)"):
-                # グリッド表示のための列作成 (例: 6列)
-                cols = st.columns(6)
+            # シリーズ内の最新更新日時（ソート用）
+            last_updated = group['id'].max()
+            
+            # シリーズ名（キーではなく、登録されているタイトルを使う。複数ある場合は一番多いものや最初のものを採用）
+            # ここでは代表としてキー（正規化されたタイトル）を表示用にする
+            display_title = key
+            if not display_title: display_title = "No Title"
+
+            series_groups.append({
+                "title": display_title,
+                "df": group.sort_values("volume"),
+                "image": cover_image,
+                "last_updated": last_updated
+            })
+        
+        # 更新順（新しい順）にソート
+        series_groups.sort(key=lambda x: x['last_updated'], reverse=True)
+
+        # グリッド表示（3列）
+        cols_per_row = 4
+        cols = st.columns(cols_per_row)
+
+        for i, series in enumerate(series_groups):
+            col = cols[i % cols_per_row]
+            with col:
+                # --- 1. 表紙画像（フォルダの入り口） ---
+                if series['image']:
+                    st.image(series['image'], use_container_width=True)
+                else:
+                    # 画像がない場合のダミー
+                    st.markdown(
+                        f"""<div style='background-color:#eee;height:150px;display:flex;align-items:center;justify_content:center;color:#888;'>No Image</div>""", 
+                        unsafe_allow_html=True
+                    )
                 
-                for i, (index, row) in enumerate(series_df.iterrows()):
-                    col = cols[i % 6] # 列を循環させる
-                    with col:
-                        # 表紙表示
-                        if row.get("image"):
-                            st.image(row["image"], use_container_width=True)
-                        else:
-                            st.markdown("🚫 No Image")
+                # --- 2. フォルダ（Expander） ---
+                # タイトルと巻数情報をラベルにする
+                count = len(series['df'])
+                with st.expander(f"📂 {series['title']} ({count})"):
+                    # Expanderの中身：各巻のリスト表示
+                    for _, row in series['df'].iterrows():
+                        # 小さいグリッドで各巻を表示
+                        c1, c2 = st.columns([1, 3])
+                        with c1:
+                            st.markdown(f"**Vol.{row['volume']}**")
+                        with c2:
+                             if st.button("編集", key=f"edit_{row['id']}"):
+                                 edit_dialog(row.to_dict())
                         
-                        # 巻数表示
-                        st.caption(f"Vol.{row['volume']}")
-                        
-                        # 詳細・編集ボタン
-                        if st.button("詳細", key=f"btn_{row['id']}"):
-                            edit_dialog(row.to_dict())
+                        # 発売日やステータスを小さく表示
+                        st.caption(f"{'✅持' if row['status']=='own' else '🙏欲'} | {row['releaseDate'] or '発売日未定'}")
+                        st.divider()
 
     else:
         st.info("まだ漫画が登録されていません。上のフォームから追加してください。")
