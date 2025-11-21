@@ -4,6 +4,7 @@ import json
 import os
 import requests
 import re
+import unicodedata
 from datetime import datetime
 
 # --- 設定 ---
@@ -37,43 +38,59 @@ def save_data(data):
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 def normalize_title(title):
-    """タイトルから巻数を除去してシリーズ名を抽出する"""
+    """タイトルから巻数や補足情報を強力に除去してシリーズ名を抽出する"""
     if not title: return ""
-    # 全角数字を半角に変換
-    title = title.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
     
-    # 末尾の巻数パターンを除去
-    title = re.sub(r'\s*\d+$', '', title)       # スペース+数字
-    title = re.sub(r'\s*\(\d+\)$', '', title)   # (数字)
-    title = re.sub(r'\s*（\d+）$', '', title)   # （数字）
-    title = re.sub(r'\s*第?\d+巻$', '', title)  # 第N巻
+    # 1. NFKC正規化（全角英数字を半角に、濁点などを統合）
+    title = unicodedata.normalize('NFKC', title)
     
+    # 2. 具体的な巻数パターンの削除
+    patterns = [
+        r'\s*\(\d+\)$',        # (1)
+        r'\s*\[\d+\]$',        # [1]
+        r'\s*<\d+>$',          # <1>
+        r'\s*第\d+巻$',        # 第1巻
+        r'\s*第\d+集$',        # 第1集
+        r'\s*vol\.?\s*\d+$',   # vol.1, Vol 1 (大文字小文字無視フラグ推奨だがここでは簡易記述)
+        r'\s*巻\d+$',          # 巻1
+        r'\s+\d+$',            # スペース + 数字 (末尾)
+    ]
+    
+    # 大文字小文字を無視して置換するためにコンパイル済みの正規表現を使う手もあるが
+    # ここでは簡易的にループ処理
+    for pattern in patterns:
+        title = re.sub(pattern, '', title, flags=re.IGNORECASE)
+    
+    # 3. 数字そのものを削除する前に、タイトル自体が数字だけになってしまわないように注意
+    # (例: "1984" という漫画の場合、数字を消すと空になる)
+    if not title.strip():
+        return title # 消しすぎた場合は元に戻す（あるいは処理前の値を保持しておく）
+        
     return title.strip()
 
 def extract_volume(title):
     """タイトルから巻数を抽出する"""
     if not title: return 1
-    # 全角数字を半角に
-    title_norm = title.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+    title_norm = unicodedata.normalize('NFKC', title)
     
-    # 末尾の数字を探すパターン
-    # "呪術廻戦 26", "ONE PIECE 100"
-    match = re.search(r'(\d+)\s*$', title_norm)
-    if match: return int(match.group(1))
+    # 様々なパターンから数字を抽出
+    patterns = [
+        r'(\d+)\s*$',           # 末尾の数字
+        r'[\(\[\<](\d+)[\)\]\>]\s*$', # (数字) [数字]
+        r'第(\d+)巻',
+        r'Vol\.?(\d+)',
+    ]
     
-    # "(26)", "（26）"
-    match = re.search(r'[\(（](\d+)[\)）]\s*$', title_norm)
-    if match: return int(match.group(1))
-    
-    # "第26巻"
-    match = re.search(r'第(\d+)巻', title_norm)
-    if match: return int(match.group(1))
+    for pattern in patterns:
+        match = re.search(pattern, title_norm, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
 
     return 1
 
 # --- 楽天ブックスAPI 関連関数 ---
 
-def search_rakuten_books(query, app_id, genre_id="001001"):
+def search_rakuten_books(query, app_id, genre_id="001001", hits=30):
     if not query or not app_id:
         return []
 
@@ -89,7 +106,7 @@ def search_rakuten_books(query, app_id, genre_id="001001"):
     params = {
         "applicationId": app_id,
         "keyword": query,
-        "hits": 30,
+        "hits": hits,
         "sort": "+releaseDate" # 発売日が古い順
     }
     
@@ -118,30 +135,23 @@ def search_rakuten_books(query, app_id, genre_id="001001"):
                         "image": info.get("largeImageUrl", ""),
                         "link": info.get("itemUrl", ""),
                         "isbn": isbn,
+                        "releaseDate": info.get("salesDate", ""), # 発売日も取得しておく
                         "source": "Rakuten"
                     })
         return results
     except Exception as e:
         return []
 
-def fetch_date_rakuten(title, next_vol, app_id):
+def get_next_volume_info(series_title, next_vol, app_id):
+    """次巻の情報をAPIからピンポイントで取得する"""
     if not app_id: return None
+
+    query = f"{series_title} {next_vol}"
+    # 1件だけ取得
+    results = search_rakuten_books(query, app_id, genre_id="001001", hits=1)
     
-    url = "https://app.rakuten.co.jp/services/api/BooksBook/Search/20170404"
-    params = {
-        "applicationId": app_id,
-        "title": f"{title} {next_vol}",
-        "booksGenreId": "001001",
-        "hits": 1,
-        "sort": "-releaseDate"
-    }
-    try:
-        response = requests.get(url, params=params)
-        data = response.json()
-        if "Items" in data and len(data["Items"]) > 0:
-            return data["Items"][0]["Item"].get("salesDate")
-    except:
-        pass
+    if results:
+        return results[0] # 最もマッチした1件を返す
     return None
 
 
@@ -263,10 +273,8 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
     
     if st.session_state.selected_book: 
         init = st.session_state.selected_book.copy()
-        # 自動巻数抽出
         detected_vol = extract_volume(init["title"])
         init["volume"] = detected_vol
-        # タイトル正規化（シリーズ名へ）
         init["title"] = normalize_title(init["title"])
 
     with st.form("reg"):
@@ -276,14 +284,13 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
             title = st.text_input("タイトル (シリーズ名)", init["title"])
             
             r1, r2, r3 = st.columns(3)
-            # 自動抽出した巻数を初期値に設定
             vol = r1.number_input("巻数", 1, step=1, value=init["volume"])
             status = r2.selectbox("状態", ["own", "want"])
             score = r3.slider("評価", 0, 5, 3)
             
             r4, r5 = st.columns(2)
             genre = r4.text_input("ジャンル", placeholder="少年, アクション")
-            date = r5.text_input("次巻発売日", placeholder="YYYY年MM月DD日")
+            date = r5.text_input("次巻発売日", placeholder="YYYY年MM月DD日", value=init.get("releaseDate", ""))
             
             r6, r7 = st.columns(2)
             f_chk = r6.checkbox("完結済み")
@@ -293,11 +300,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
             else: st.info("No Image")
 
         if st.form_submit_button("追加") and title:
-            if not date and rakuten_app_id:
-                next_v = vol + 1
-                fetched = fetch_date_rakuten(title, next_v, rakuten_app_id)
-                if fetched: date = fetched
-            
+            # フォーム送信時は手動入力されたdateを使用（初期値に入っていればそれが使われる）
             new_d = {
                 "id": datetime.now().strftime("%Y%m%d%H%M%S"),
                 "title": title, "volume": vol, "releaseDate": date, "status": status,
@@ -319,6 +322,8 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
 
     if st.session_state.manga_data:
         df = pd.DataFrame(st.session_state.manga_data)
+        
+        # 正規化タイトル（シリーズキー）を作成
         df['series_key'] = df['title'].apply(normalize_title)
         
         series_groups = []
@@ -326,18 +331,25 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
             # 1巻（または最小巻）の情報を取得
             min_vol_row = group.loc[group['volume'].idxmin()]
             cover_image = min_vol_row.get('image', '')
-            # 代表リンク（1巻の楽天ページなど）
             cover_link = min_vol_row.get('link', '')
             
+            # シリーズ情報
             last_updated = group['id'].max()
+            max_vol = group['volume'].max() # 現在の最新巻
+            
             display_title = key if key else "No Title"
-
+            
+            # メタデータ（ジャンル等は最新のものを継承用に使用）
+            latest_row = group.loc[group['volume'].idxmax()]
+            
             series_groups.append({
                 "title": display_title,
                 "df": group.sort_values("volume"),
                 "image": cover_image,
                 "link": cover_link,
-                "last_updated": last_updated
+                "last_updated": last_updated,
+                "max_vol": max_vol,
+                "meta": latest_row.to_dict() # 次巻追加用
             })
         
         series_groups.sort(key=lambda x: x['last_updated'], reverse=True)
@@ -348,17 +360,60 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
         for i, series in enumerate(series_groups):
             col = cols[i % cols_per_row]
             with col:
-                # 画像にリンクを設定 (クリックで楽天へ)
+                # 表紙画像
                 if series['image']:
                     st.image(series['image'], use_container_width=True)
                     if series['link']:
                         st.caption(f"[🔗 楽天で見る]({series['link']})")
                 else:
-                    st.markdown(f"<div style='background:#eee;height:100px;text-align:center;padding:40px;'>No Img</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='background:#eee;height:150px;text-align:center;padding:60px 0;'>No Img</div>", unsafe_allow_html=True)
                 
                 # フォルダ (Expander)
                 count = len(series['df'])
                 with st.expander(f"📂 {series['title']} ({count})"):
+                    
+                    # --- クイック追加機能 ---
+                    next_vol_num = int(series['max_vol']) + 1
+                    if st.button(f"➕ Vol.{next_vol_num} を追加", key=f"add_next_{series['title']}"):
+                        with st.spinner(f"Vol.{next_vol_num} の情報を検索中..."):
+                            # 自動検索
+                            new_info = get_next_volume_info(series['title'], next_vol_num, rakuten_app_id)
+                            
+                            # 基本データ（既存データを継承）
+                            base_data = series['meta']
+                            new_entry = {
+                                "id": datetime.now().strftime("%Y%m%d%H%M%S"),
+                                "title": series['title'], # 正規化されたタイトルを維持
+                                "volume": next_vol_num,
+                                "status": "want", # 次巻はとりあえずwant
+                                "my_score": 0,
+                                "genre": base_data.get("genre", ""),
+                                "is_finished": False,
+                                "is_unread": True, # 買ったばかりor未発売なので未読
+                                "author": base_data.get("author", ""),
+                                "publisher": base_data.get("publisher", ""),
+                                # 以下は検索で見つかれば更新、なければ空or継承
+                                "image": "",
+                                "link": "",
+                                "isbn": "",
+                                "releaseDate": ""
+                            }
+                            
+                            if new_info:
+                                new_entry["image"] = new_info.get("image", "")
+                                new_entry["link"] = new_info.get("link", "")
+                                new_entry["isbn"] = new_info.get("isbn", "")
+                                new_entry["releaseDate"] = new_info.get("releaseDate", "")
+                                # 見つかった場合はタイトルもAPIのものに合わせる？いや、シリーズ管理したいので正規化タイトルを維持すべき
+                            
+                            st.session_state.manga_data.append(new_entry)
+                            save_data(st.session_state.manga_data)
+                            st.toast(f"Vol.{next_vol_num} を追加しました！")
+                            st.rerun()
+                    
+                    st.divider()
+
+                    # --- 既刊リスト ---
                     for _, row in series['df'].iterrows():
                         c1, c2 = st.columns([1, 2])
                         with c1:
@@ -366,6 +421,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                         with c2:
                              if st.button("編集", key=f"edit_{row['id']}"):
                                  edit_dialog(row.to_dict())
+                        st.caption(f"{'✅持' if row['status']=='own' else '🙏欲'} | {row['releaseDate'] or '-'}")
                         st.divider()
 
     else:
