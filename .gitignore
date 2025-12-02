@@ -1,13 +1,10 @@
-# Pythonのキャッシュなど
-__pycache__/
+Streamlitの秘密設定ファイル（絶対に公開してはいけない）
+
+.streamlit/secrets.toml
+
+その他不要なファイル
+
+pycache/
 *.pyc
-
-# ローカルの仮想環境フォルダ（もし作っていれば）
-venv/
-.env
-
-# macの不要ファイル
 .DS_Store
-
-# ローカルのデータ（※自分の所有リストを公開したくない場合）
-manga_data.json
+venv/
