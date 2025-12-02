@@ -126,5 +126,21 @@
         "link": "https://books.rakuten.co.jp/rb/17085820/?rafcid=wsc_b_ts_1087757348581566314",
         "isbn": "9784065275283",
         "releaseDate": "2022年04月15日"
+    },
+    {
+        "id": "20251202064036",
+        "title": "シャングリラ・フロンティア 〜クソゲーハンター、神ゲーに挑まんとす〜",
+        "volume": 9,
+        "status": "want",
+        "my_score": 0,
+        "genre": "",
+        "is_finished": false,
+        "is_unread": true,
+        "author": "硬梨菜/不二 涼介",
+        "publisher": "講談社",
+        "image": "https://thumbnail.image.rakuten.co.jp/@0_mall/book/cabinet/4339/9784065284339_1_2.jpg?_ex=200x200",
+        "link": "https://books.rakuten.co.jp/rb/17181423/?rafcid=wsc_b_ts_1087757348581566314",
+        "isbn": "9784065284339",
+        "releaseDate": "2022年07月15日"
     }
 ]
