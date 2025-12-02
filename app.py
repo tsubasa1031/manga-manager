@@ -12,10 +12,12 @@ from datetime import datetime
 DATA_FILE = 'manga_data.json'
 
 # --- GitHub設定の読み込み ---
-# Streamlit CloudのSecrets、またはローカルのsecrets.tomlから読み込む
 GITHUB_TOKEN = st.secrets.get("github", {}).get("token")
-REPO_NAME = st.secrets.get("github", {}).get("repo") # "username/repo"
+REPO_NAME = st.secrets.get("github", {}).get("repo") 
 BRANCH = st.secrets.get("github", {}).get("branch", "main")
+
+# --- 楽天設定の読み込み ---
+RAKUTEN_APP_ID_SECRET = st.secrets.get("rakuten", {}).get("app_id", "")
 
 # --- 関数定義 ---
 
@@ -30,15 +32,12 @@ def load_data():
         try:
             response = requests.get(url, headers=headers)
             if response.status_code == 200:
-                # GitHub上のファイル内容（Base64）をデコード
                 content = base64.b64decode(response.json()['content']).decode('utf-8')
                 data = json.loads(content)
             elif response.status_code == 404:
-                # ファイルがまだない場合は空リスト
                 data = []
-            # else: エラー時はローカルへフォールバック
         except Exception:
-            pass # GitHub失敗時はローカルを試す
+            pass 
     
     # 2. GitHub設定がない、または失敗した場合はローカルファイルを確認
     if not data and os.path.exists(DATA_FILE):
@@ -48,7 +47,7 @@ def load_data():
         except json.JSONDecodeError:
             data = []
     
-    # 既存データ補完（必須キーがない場合のフォールバック）
+    # 既存データ補完
     for d in data:
         d.setdefault('my_score', 0)
         d.setdefault('genre', '未分類')
@@ -62,16 +61,13 @@ def save_data(data):
     """データを保存する（GitHubがあればアップロード、ローカルも更新）"""
     json_str = json.dumps(data, indent=4, ensure_ascii=False)
     
-    # 1. ローカル保存（一時的なキャッシュとして）
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         f.write(json_str)
 
-    # 2. GitHubへアップロード（設定がある場合）
     if GITHUB_TOKEN and REPO_NAME:
         url = f"https://api.github.com/repos/{REPO_NAME}/contents/{DATA_FILE}"
         headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
         
-        # まず現在のファイルのSHAハッシュを取得（上書きに必要）
         sha = None
         try:
             get_resp = requests.get(url + f"?ref={BRANCH}", headers=headers)
@@ -80,7 +76,6 @@ def save_data(data):
         except:
             pass
 
-        # 更新リクエストの作成
         content_b64 = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
         payload = {
             "message": f"Update data {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
@@ -92,18 +87,13 @@ def save_data(data):
             
         try:
             requests.put(url, headers=headers, json=payload)
-            # エラーハンドリングは簡易化
         except Exception as e:
             st.error(f"GitHub保存例外: {e}")
 
 def normalize_title(title):
     """タイトルから巻数や補足情報を強力に除去してシリーズ名を抽出する"""
     if not title: return ""
-    
-    # 1. NFKC正規化
     title = unicodedata.normalize('NFKC', title)
-    
-    # 2. 具体的な巻数パターンの削除
     patterns = [
         r'\s*\(\d+\)', r'\s*\[\d+\]', r'\s*<\d+>', 
         r'\s*第\d+巻', r'\s*第\d+集', r'\s*\d+巻',
@@ -111,18 +101,13 @@ def normalize_title(title):
     ]
     for pattern in patterns:
         title = re.sub(pattern, ' ', title, flags=re.IGNORECASE)
-
-    # 3. 独立した数字の削除
     title = re.sub(r'\s+\d+(\s|$)', ' ', title)
-    
-    # 4. 余分なスペースを整理
     return re.sub(r'\s+', ' ', title).strip()
 
 def extract_volume(title):
     """タイトルから巻数を抽出する"""
     if not title: return 1
     title_norm = unicodedata.normalize('NFKC', title)
-    
     patterns = [
         r'第(\d+)巻', r'\d+巻', r'Vol\.?(\d+)', 
         r'[\(\[\<](\d+)[\)\]\>]', r'\s(\d+)\s', r'(\d+)$',
@@ -169,10 +154,8 @@ def search_rakuten_books(query, app_id, genre_id="001001", hits=30):
 def get_next_volume_info(series_title, next_vol, app_id):
     if not app_id: return None
     query = f"{series_title} {next_vol}"
-    # 通常版優先ロジック
     results = search_rakuten_books(query, app_id, genre_id="001001", hits=10)
     if not results: return None
-    
     exclude_keywords = ["特装版", "限定版", "同梱版", "プレミアム", "ドラマCD", "小冊子", "付録"]
     for res in results:
         if not any(kw in res["title"] for kw in exclude_keywords): return res
@@ -199,13 +182,13 @@ with st.sidebar:
     st.divider()
     
     st.header("⚙️ 設定")
-    rakuten_app_id = st.text_input("楽天 Application ID", type="password")
+    # Secretsから楽天IDを読み込んでデフォルト値にする
+    rakuten_app_id = st.text_input("楽天 Application ID", value=RAKUTEN_APP_ID_SECRET, type="password")
     
-    # GitHub連携状態の表示
     if GITHUB_TOKEN and REPO_NAME:
         st.success(f"☁️ GitHub連携中")
     else:
-        st.info("☁️ GitHub未設定 (一時保存モード)")
+        st.info("☁️ GitHub未設定")
 
 # --- 共通関数 ---
 def update_data(edited_df):
@@ -307,6 +290,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
             st.session_state.manga_data.append(new_d)
             save_data(st.session_state.manga_data)
             st.success(f"『{title}』 Vol.{vol} を追加しました")
+            
             st.session_state.search_results = []
             st.session_state.selected_book = None
             st.session_state.last_search_query = "" 
