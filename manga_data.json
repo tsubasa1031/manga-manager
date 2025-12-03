@@ -350,5 +350,21 @@
         "link": "https://books.rakuten.co.jp/rb/16693878/?rafcid=wsc_b_ts_1087757348581566314",
         "isbn": "9784065233344",
         "releaseDate": "2021年05月06日"
+    },
+    {
+        "id": "20251203071151",
+        "title": "MFゴースト",
+        "volume": 12,
+        "status": "want",
+        "my_score": 0,
+        "genre": "",
+        "is_finished": false,
+        "is_unread": true,
+        "author": "しげの 秀一",
+        "publisher": "講談社",
+        "image": "https://thumbnail.image.rakuten.co.jp/@0_mall/book/cabinet/7464/9784065247464_1_2.jpg?_ex=200x200",
+        "link": "https://books.rakuten.co.jp/rb/16832782/?rafcid=wsc_b_ts_1087757348581566314",
+        "isbn": "9784065247464",
+        "releaseDate": "2021年09月06日"
     }
 ]
