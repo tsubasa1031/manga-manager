@@ -398,5 +398,21 @@
         "link": "https://books.rakuten.co.jp/rb/17108823/?rafcid=wsc_b_ts_1087757348581566314",
         "isbn": "9784065277782",
         "releaseDate": "2022年05月06日"
+    },
+    {
+        "id": "20251203071200",
+        "title": "MFゴースト",
+        "volume": 15,
+        "status": "want",
+        "my_score": 0,
+        "genre": "",
+        "is_finished": false,
+        "is_unread": true,
+        "author": "しげの 秀一",
+        "publisher": "講談社",
+        "image": "https://thumbnail.image.rakuten.co.jp/@0_mall/book/cabinet/0705/9784065290705_1_3.jpg?_ex=200x200",
+        "link": "https://books.rakuten.co.jp/rb/17249166/?rafcid=wsc_b_ts_1087757348581566314",
+        "isbn": "9784065290705",
+        "releaseDate": "2022年09月06日"
     }
 ]
