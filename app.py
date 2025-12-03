@@ -200,7 +200,8 @@ def edit_single_book_dialog(item):
             else: st.write("No Image")
         with col2:
             new_title = st.text_input("タイトル", item["title"])
-            new_vol = st.number_input("巻数", value=item["volume"], step=1)
+            # 巻数スライダー
+            new_vol = st.slider("巻数", min_value=1, max_value=max(200, item["volume"] + 10), value=item["volume"])
             new_date = st.text_input("発売日", item.get("releaseDate", ""))
             
             if st.form_submit_button("更新"):
@@ -279,7 +280,6 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
         st.warning("⚠️ サイドバーで楽天Application IDを設定してください。")
 
     # === 1. 登録・検索エリア ===
-    # 元のシンプルな登録画面に戻す（Expanderなし、スライダーなし）
     st.subheader("📚 漫画登録")
     
     with st.container():
@@ -303,7 +303,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                 current_sel = st.session_state.search_results[opts.index(sel)-1]
                 st.session_state.selected_book = current_sel
 
-    # 登録フォーム（シンプル版）
+    # 登録フォーム
     init = {"title":"", "image":"", "author":"", "publisher":"", "isbn":"", "link":"", "volume": 1}
     
     if st.session_state.selected_book:
@@ -321,7 +321,8 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
         with col_form:
             st.caption("以下の内容で登録します")
             title = st.text_input("タイトル (シリーズ名)", init["title"])
-            vol = st.number_input("巻数", value=init["volume"], step=1)
+            # 巻数スライダー
+            vol = st.slider("巻数", min_value=1, max_value=max(200, init["volume"] + 10), value=init["volume"])
             date = st.text_input("発売日", value=init.get("releaseDate", ""))
             
             submit = st.form_submit_button("追加", type="primary")
@@ -338,7 +339,6 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
             save_data(st.session_state.manga_data)
             st.success(f"『{title}』 Vol.{vol} を追加しました！")
             
-            # フォームリセット
             st.session_state.search_results = []
             st.session_state.selected_book = None
             st.rerun()
