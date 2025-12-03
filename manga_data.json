@@ -199,7 +199,7 @@
         "my_score": 0,
         "genre": "",
         "is_finished": false,
-        "is_unread": true,
+        "is_unread": false,
         "author": "しげの 秀一",
         "publisher": "講談社",
         "image": "https://thumbnail.image.rakuten.co.jp/@0_mall/book/cabinet/4513/9784065114513_1_14.jpg?_ex=200x200",
