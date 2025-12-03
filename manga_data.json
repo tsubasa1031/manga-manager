@@ -222,5 +222,21 @@
         "link": "https://books.rakuten.co.jp/rb/15596047/?rafcid=wsc_b_ts_1087757348581566314",
         "isbn": "9784065128190",
         "releaseDate": "2018年09月06日頃"
+    },
+    {
+        "id": "20251203071127",
+        "title": "MFゴースト",
+        "volume": 4,
+        "status": "want",
+        "my_score": 0,
+        "genre": "",
+        "is_finished": false,
+        "is_unread": true,
+        "author": "しげの 秀一",
+        "publisher": "講談社",
+        "image": "https://thumbnail.image.rakuten.co.jp/@0_mall/book/cabinet/1601/9784065141601_1_16.jpg?_ex=200x200",
+        "link": "https://books.rakuten.co.jp/rb/15741939/?rafcid=wsc_b_ts_1087757348581566314",
+        "isbn": "9784065141601",
+        "releaseDate": "2019年01月04日"
     }
 ]
