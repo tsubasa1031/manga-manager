@@ -542,5 +542,21 @@
         "link": "https://books.rakuten.co.jp/rb/18234435/?rafcid=wsc_b_ts_1087757348581566314",
         "isbn": "9784065401804",
         "releaseDate": "2025年06月06日"
+    },
+    {
+        "id": "20251203071228",
+        "title": "MFゴースト",
+        "volume": 24,
+        "status": "want",
+        "my_score": 0,
+        "genre": "",
+        "is_finished": false,
+        "is_unread": true,
+        "author": "しげの 秀一",
+        "publisher": "講談社",
+        "image": "",
+        "link": "",
+        "isbn": "",
+        "releaseDate": ""
     }
 ]
