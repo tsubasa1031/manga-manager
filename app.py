@@ -49,7 +49,6 @@ def load_data():
     
     # データ補完
     for d in data:
-        # 不要なジャンル等は削除し、シンプルに
         d.setdefault('title', 'No Title')
         d.setdefault('status', 'own')
     return data
@@ -143,26 +142,6 @@ def search_rakuten_books(query, app_id, genre_id="001001", hits=30, sort="+relea
         return results
     except: return []
 
-def get_series_stats(series_title, app_id):
-    """シリーズの統計情報を取得"""
-    if not app_id or not series_title: return 1, None, {}
-    
-    results = search_rakuten_books(series_title, app_id, hits=30, sort="standard")
-    max_vol = 1
-    meta = None
-    vol_image_map = {}
-    
-    if results:
-        sorted_by_vol = sorted(results, key=lambda x: extract_volume(x['title']))
-        meta = sorted_by_vol[0] if sorted_by_vol else results[0]
-        
-        for res in results:
-            v = extract_volume(res['title'])
-            if v > max_vol: max_vol = v
-            if res.get('image'): vol_image_map[v] = res['image']
-
-    return max_vol, meta, vol_image_map
-
 def get_next_volume_info(series_title, next_vol, app_id):
     """次巻情報取得 (通常版優先)"""
     if not app_id: return None
@@ -187,13 +166,6 @@ if 'selected_book' not in st.session_state:
     st.session_state.selected_book = None
 if 'last_search_query' not in st.session_state:
     st.session_state.last_search_query = ""
-# シリーズ情報保持用
-if 'series_max_vol' not in st.session_state:
-    st.session_state.series_max_vol = 1
-if 'series_meta_info' not in st.session_state:
-    st.session_state.series_meta_info = {}
-if 'series_vol_images' not in st.session_state:
-    st.session_state.series_vol_images = {}
 
 # --- サイドバー ---
 with st.sidebar:
@@ -248,7 +220,6 @@ def edit_single_book_dialog(item):
 def series_detail_dialog(series_info):
     """
     シリーズ全体の所持巻一覧を表示するダイアログ
-    series_info: {title, df, image, link, max_vol, meta}
     """
     st.subheader(f"📖 {series_info['title']}")
     
@@ -308,78 +279,69 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
         st.warning("⚠️ サイドバーで楽天Application IDを設定してください。")
 
     # === 1. 登録・検索エリア ===
-    with st.expander("➕ 新しい漫画を登録する", expanded=False):
-        with st.container():
-            search_query = st.text_input("タイトル検索 (入力してEnter)", placeholder="例: 呪術廻戦", key="s_in")
+    # 元のシンプルな登録画面に戻す（Expanderなし、スライダーなし）
+    st.subheader("📚 漫画登録")
+    
+    with st.container():
+        search_query = st.text_input("タイトル検索 (入力してEnter)", placeholder="例: 呪術廻戦", key="s_in")
+        
+        # 自動検索
+        if search_query and rakuten_app_id and search_query != st.session_state.last_search_query:
+            with st.spinner('検索中...'):
+                st.session_state.selected_book = None
+                results = search_rakuten_books(search_query, rakuten_app_id, genre_id="001001", hits=20)
+                st.session_state.search_results = results
+                st.session_state.last_search_query = search_query 
+                if not results: st.warning("見つかりませんでした。")
+
+        # 候補選択
+        if st.session_state.search_results:
+            opts = ["(選択してください)"] + [f"{r['title']}" for r in st.session_state.search_results]
+            sel = st.selectbox("↓ 追加する本を選択", opts, key="s_sel")
             
-            # 自動検索
-            if search_query and rakuten_app_id and search_query != st.session_state.last_search_query:
-                with st.spinner('シリーズ情報を検索中...'):
-                    st.session_state.selected_book = None
-                    results = search_rakuten_books(search_query, rakuten_app_id, genre_id="001001", hits=20)
-                    st.session_state.search_results = results
-                    st.session_state.last_search_query = search_query 
-                    st.session_state.series_max_vol = 1
-                    if not results: st.warning("見つかりませんでした。")
+            if sel != "(選択してください)":
+                current_sel = st.session_state.search_results[opts.index(sel)-1]
+                st.session_state.selected_book = current_sel
 
-            # 候補選択
-            if st.session_state.search_results:
-                opts = ["(選択してください)"] + [f"{r['title']}" for r in st.session_state.search_results]
-                sel = st.selectbox("↓ シリーズを選択してください", opts, key="s_sel")
-                
-                if sel != "(選択してください)":
-                    current_sel = st.session_state.search_results[opts.index(sel)-1]
-                    if st.session_state.selected_book != current_sel:
-                        st.session_state.selected_book = current_sel
-                        norm_title = normalize_title(current_sel['title'])
-                        with st.spinner(f'「{norm_title}」の全巻情報を確認中...'):
-                            max_vol, meta_info, vol_images = get_series_stats(norm_title, rakuten_app_id)
-                            st.session_state.series_max_vol = max_vol
-                            st.session_state.series_vol_images = vol_images
-                            st.session_state.series_meta_info = meta_info if meta_info else current_sel
+    # 登録フォーム（シンプル版）
+    init = {"title":"", "image":"", "author":"", "publisher":"", "isbn":"", "link":"", "volume": 1}
+    
+    if st.session_state.selected_book:
+        init = st.session_state.selected_book.copy()
+        init["volume"] = extract_volume(init["title"])
+        init["title"] = normalize_title(init["title"])
 
-        # 一括登録（スライダー）エリア
-        if st.session_state.selected_book:
-            meta = st.session_state.series_meta_info
-            vol_images = st.session_state.series_vol_images
-            series_title = normalize_title(meta['title']) if meta else ""
-            max_v = st.session_state.series_max_vol
+    with st.form("reg"):
+        col_img, col_form = st.columns([1, 3])
+        
+        with col_img:
+            if init.get("image"): st.image(init["image"], width=100)
+            else: st.info("No Image")
             
-            st.markdown(f"**{series_title}** (最新刊目安: {max_v}巻)")
+        with col_form:
+            st.caption("以下の内容で登録します")
+            title = st.text_input("タイトル (シリーズ名)", init["title"])
+            vol = st.number_input("巻数", value=init["volume"], step=1)
+            date = st.text_input("発売日", value=init.get("releaseDate", ""))
+            
+            submit = st.form_submit_button("追加", type="primary")
 
-            with st.form("bulk_reg"):
-                slider_limit = max(max_v, 2)
-                owned_vol = st.slider("何巻まで持っていますか？", 1, slider_limit, 1)
-                st.caption(f"1巻 〜 {owned_vol}巻 を登録します")
-
-                if st.form_submit_button("一括登録する", type="primary"):
-                    added_count = 0
-                    for v in range(1, owned_vol + 1):
-                        exists = False
-                        for existing in st.session_state.manga_data:
-                            if existing['title'] == series_title and existing['volume'] == v:
-                                exists = True; break
-                        
-                        if not exists:
-                            img_url = vol_images.get(v, meta.get("image", ""))
-                            new_d = {
-                                "id": datetime.now().strftime("%Y%m%d%H%M%S") + str(v),
-                                "title": series_title, "volume": v, "status": "own",
-                                "image": img_url, "author": meta.get("author", ""),
-                                "publisher": meta.get("publisher", ""), "isbn": "", 
-                                "link": meta.get("link", ""), "releaseDate": ""
-                            }
-                            st.session_state.manga_data.append(new_d)
-                            added_count += 1
-                    
-                    save_data(st.session_state.manga_data)
-                    if added_count > 0:
-                        st.success(f"{added_count}冊 追加しました！")
-                        st.session_state.search_results = []
-                        st.session_state.selected_book = None
-                        st.rerun()
-                    else:
-                        st.warning("すべて登録済みです。")
+        if submit and title:
+            new_d = {
+                "id": datetime.now().strftime("%Y%m%d%H%M%S"),
+                "title": title, "volume": vol, "status": "own",
+                "image": init.get("image", ""), "author": init.get("author", ""),
+                "publisher": init.get("publisher", ""), "isbn": init.get("isbn", ""), 
+                "link": init.get("link", ""), "releaseDate": date
+            }
+            st.session_state.manga_data.append(new_d)
+            save_data(st.session_state.manga_data)
+            st.success(f"『{title}』 Vol.{vol} を追加しました！")
+            
+            # フォームリセット
+            st.session_state.search_results = []
+            st.session_state.selected_book = None
+            st.rerun()
 
     st.divider()
     
