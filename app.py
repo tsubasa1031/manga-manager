@@ -190,17 +190,18 @@ def update_data(edited_df):
     st.session_state.manga_data = list(current_data_map.values())
     save_data(st.session_state.manga_data)
 
-@st.dialog("1冊の詳細編集")
-def edit_single_book_dialog(item):
-    """個別の本の編集用ダイアログ"""
-    with st.form(f"edit_form_{item['id']}"):
+# ネストエラー回避のため、デコレータ(@st.dialog)を削除した編集フォーム関数
+def render_edit_form(item, key_suffix=""):
+    """
+    1冊の詳細編集フォーム (st.dialogの中で使う用)
+    """
+    with st.form(f"edit_form_{item['id']}_{key_suffix}"):
         col1, col2 = st.columns([1, 2])
         with col1:
             if item.get("image"): st.image(item["image"], width=100)
             else: st.write("No Image")
         with col2:
             new_title = st.text_input("タイトル", item["title"])
-            # 巻数スライダー
             new_vol = st.slider("巻数", min_value=1, max_value=max(200, item["volume"] + 10), value=item["volume"])
             new_date = st.text_input("発売日", item.get("releaseDate", ""))
             
@@ -217,29 +218,50 @@ def edit_single_book_dialog(item):
                 save_data(st.session_state.manga_data)
                 st.rerun()
 
+# メイン画面から呼ぶ用のダイアログ（ネストしない場合に使用）
+@st.dialog("詳細編集")
+def edit_dialog_main(item):
+    render_edit_form(item, "main")
+
+# シリーズ詳細ダイアログ
 @st.dialog("シリーズ詳細", width="large")
-def series_detail_dialog(series_info):
+def series_detail_dialog(series_title):
     """
     シリーズ全体の所持巻一覧を表示するダイアログ
+    引数は series_info ではなく title を受け取り、内部で最新データを再取得する
     """
-    st.subheader(f"📖 {series_info['title']}")
+    # 最新データを取得してフィルタリング (rerun時のデータ不整合防止)
+    current_data = st.session_state.manga_data
+    series_books = [d for d in current_data if normalize_title(d['title']) == series_title]
+    
+    if not series_books:
+        st.error("データが見つかりません。")
+        return
+
+    # DataFrame化してソート
+    df_series = pd.DataFrame(series_books).sort_values("volume")
+    
+    # メタ情報（最大巻数や代表画像）の計算
+    max_vol = df_series['volume'].max()
+    min_vol_idx = df_series['volume'].idxmin()
+    meta_row = df_series.loc[min_vol_idx]
+    
+    st.subheader(f"📖 {series_title}")
     
     # --- 次巻追加エリア ---
-    next_vol_num = int(series_info['max_vol']) + 1
+    next_vol_num = int(max_vol) + 1
     
-    # ダイアログ内でのアクション用コンテナ
     col_add, col_link = st.columns([2, 1])
     with col_add:
-        if st.button(f"➕ 次の巻 (Vol.{next_vol_num}) を追加", key=f"dlg_add_{series_info['title']}"):
+        if st.button(f"➕ 次の巻 (Vol.{next_vol_num}) を追加", key=f"dlg_add_{series_title}"):
             with st.spinner("検索中..."):
-                new_info = get_next_volume_info(series_info['title'], next_vol_num, rakuten_app_id)
-                base = series_info['meta']
+                new_info = get_next_volume_info(series_title, next_vol_num, rakuten_app_id)
                 new_entry = {
                     "id": datetime.now().strftime("%Y%m%d%H%M%S"),
-                    "title": series_info['title'],
+                    "title": series_title,
                     "volume": next_vol_num,
                     "status": "own",
-                    "author": base.get("author", ""), "publisher": base.get("publisher", ""),
+                    "author": meta_row.get("author", ""), "publisher": meta_row.get("publisher", ""),
                     "image": new_info.get("image", "") if new_info else "",
                     "link": new_info.get("link", "") if new_info else "",
                     "isbn": new_info.get("isbn", "") if new_info else "",
@@ -251,23 +273,24 @@ def series_detail_dialog(series_info):
                 st.rerun()
     
     with col_link:
-        if series_info['link']:
-            st.link_button("楽天で見る", series_info['link'])
+        if meta_row.get('link'):
+            st.link_button("楽天で見る", meta_row['link'])
 
     st.divider()
 
     # --- 所持巻リスト（グリッド表示） ---
     vol_cols = st.columns(4)
-    for j, (idx, row) in enumerate(series_info['df'].iterrows()):
+    for j, (idx, row) in enumerate(df_series.iterrows()):
         with vol_cols[j % 4]:
             if row.get("image"):
                 st.image(row["image"], use_container_width=True)
             else:
                 st.caption("No Image")
             
-            # 編集ボタン
-            if st.button("編集", key=f"dlg_edit_{row['id']}"):
-                edit_single_book_dialog(row.to_dict())
+            # ここ重要：ダイアログの中でダイアログは開けないので、st.popoverを使用する
+            with st.popover("編集"):
+                # ポップオーバーの中に編集フォームを展開
+                render_edit_form(row.to_dict(), "popover")
             
             st.caption(f"Vol.{row['volume']}")
 
@@ -386,8 +409,9 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                 
                 # 詳細を開くボタン（ダイアログ起動）
                 count = len(series['df'])
+                # シリーズ名を渡してダイアログを開く
                 if st.button(f"📂 全{count}冊を見る", key=f"open_{series['title']}"):
-                    series_detail_dialog(series)
+                    series_detail_dialog(series['title'])
                 
                 st.divider()
     else:
