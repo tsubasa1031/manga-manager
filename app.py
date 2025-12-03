@@ -166,6 +166,9 @@ if 'selected_book' not in st.session_state:
     st.session_state.selected_book = None
 if 'last_search_query' not in st.session_state:
     st.session_state.last_search_query = ""
+# ダイアログの開閉状態を管理する変数
+if 'opened_series_title' not in st.session_state:
+    st.session_state.opened_series_title = None
 
 # --- サイドバー ---
 with st.sidebar:
@@ -190,11 +193,8 @@ def update_data(edited_df):
     st.session_state.manga_data = list(current_data_map.values())
     save_data(st.session_state.manga_data)
 
-# ネストエラー回避のため、デコレータ(@st.dialog)を削除した編集フォーム関数
+# 1冊の詳細編集フォーム
 def render_edit_form(item, key_suffix=""):
-    """
-    1冊の詳細編集フォーム (st.dialogの中で使う用)
-    """
     with st.form(f"edit_form_{item['id']}_{key_suffix}"):
         col1, col2 = st.columns([1, 2])
         with col1:
@@ -202,13 +202,16 @@ def render_edit_form(item, key_suffix=""):
             else: st.write("No Image")
         with col2:
             new_title = st.text_input("タイトル", item["title"])
-            new_vol = st.slider("巻数", min_value=1, max_value=max(200, item["volume"] + 10), value=item["volume"])
+            # 巻数は表示のみにする（変更不可、または変更したい場合は削除して再登録を促すのが安全）
+            st.caption(f"巻数: {item['volume']}")
             new_date = st.text_input("発売日", item.get("releaseDate", ""))
             
             if st.form_submit_button("更新"):
                 for d in st.session_state.manga_data:
                     if d['id'] == item['id']:
-                        d['title'] = new_title; d['volume'] = new_vol; d['releaseDate'] = new_date
+                        d['title'] = new_title
+                        # volumeは変更しない
+                        d['releaseDate'] = new_date
                         break
                 save_data(st.session_state.manga_data)
                 st.rerun()
@@ -218,19 +221,10 @@ def render_edit_form(item, key_suffix=""):
                 save_data(st.session_state.manga_data)
                 st.rerun()
 
-# メイン画面から呼ぶ用のダイアログ（ネストしない場合に使用）
-@st.dialog("詳細編集")
-def edit_dialog_main(item):
-    render_edit_form(item, "main")
-
 # シリーズ詳細ダイアログ
 @st.dialog("シリーズ詳細", width="large")
 def series_detail_dialog(series_title):
-    """
-    シリーズ全体の所持巻一覧を表示するダイアログ
-    引数は series_info ではなく title を受け取り、内部で最新データを再取得する
-    """
-    # 最新データを取得してフィルタリング (rerun時のデータ不整合防止)
+    # 最新データを取得
     current_data = st.session_state.manga_data
     series_books = [d for d in current_data if normalize_title(d['title']) == series_title]
     
@@ -238,10 +232,7 @@ def series_detail_dialog(series_title):
         st.error("データが見つかりません。")
         return
 
-    # DataFrame化してソート
     df_series = pd.DataFrame(series_books).sort_values("volume")
-    
-    # メタ情報（最大巻数や代表画像）の計算
     max_vol = df_series['volume'].max()
     min_vol_idx = df_series['volume'].idxmin()
     meta_row = df_series.loc[min_vol_idx]
@@ -253,6 +244,7 @@ def series_detail_dialog(series_title):
     
     col_add, col_link = st.columns([2, 1])
     with col_add:
+        # ここでボタンを押して追加処理が走っても、opened_series_title が維持されていればダイアログは再描画される
         if st.button(f"➕ 次の巻 (Vol.{next_vol_num}) を追加", key=f"dlg_add_{series_title}"):
             with st.spinner("検索中..."):
                 new_info = get_next_volume_info(series_title, next_vol_num, rakuten_app_id)
@@ -278,7 +270,7 @@ def series_detail_dialog(series_title):
 
     st.divider()
 
-    # --- 所持巻リスト（グリッド表示） ---
+    # --- 所持巻リスト ---
     vol_cols = st.columns(4)
     for j, (idx, row) in enumerate(df_series.iterrows()):
         with vol_cols[j % 4]:
@@ -287,9 +279,7 @@ def series_detail_dialog(series_title):
             else:
                 st.caption("No Image")
             
-            # ここ重要：ダイアログの中でダイアログは開けないので、st.popoverを使用する
             with st.popover("編集"):
-                # ポップオーバーの中に編集フォームを展開
                 render_edit_form(row.to_dict(), "popover")
             
             st.caption(f"Vol.{row['volume']}")
@@ -308,7 +298,6 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
     with st.container():
         search_query = st.text_input("タイトル検索 (入力してEnter)", placeholder="例: 呪術廻戦", key="s_in")
         
-        # 自動検索
         if search_query and rakuten_app_id and search_query != st.session_state.last_search_query:
             with st.spinner('検索中...'):
                 st.session_state.selected_book = None
@@ -317,7 +306,6 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                 st.session_state.last_search_query = search_query 
                 if not results: st.warning("見つかりませんでした。")
 
-        # 候補選択
         if st.session_state.search_results:
             opts = ["(選択してください)"] + [f"{r['title']}" for r in st.session_state.search_results]
             sel = st.selectbox("↓ 追加する本を選択", opts, key="s_sel")
@@ -336,16 +324,15 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
 
     with st.form("reg"):
         col_img, col_form = st.columns([1, 3])
-        
         with col_img:
             if init.get("image"): st.image(init["image"], width=100)
             else: st.info("No Image")
-            
         with col_form:
             st.caption("以下の内容で登録します")
             title = st.text_input("タイトル (シリーズ名)", init["title"])
-            # 巻数スライダー
-            vol = st.slider("巻数", min_value=1, max_value=max(200, init["volume"] + 10), value=init["volume"])
+            # 巻数スライダーを削除し、表示のみにする（または隠す）
+            # ここでは確認用にテキスト表示
+            st.write(f"**巻数:** {init['volume']}")
             date = st.text_input("発売日", value=init.get("releaseDate", ""))
             
             submit = st.form_submit_button("追加", type="primary")
@@ -353,14 +340,14 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
         if submit and title:
             new_d = {
                 "id": datetime.now().strftime("%Y%m%d%H%M%S"),
-                "title": title, "volume": vol, "status": "own",
+                "title": title, "volume": init["volume"], "status": "own",
                 "image": init.get("image", ""), "author": init.get("author", ""),
                 "publisher": init.get("publisher", ""), "isbn": init.get("isbn", ""), 
                 "link": init.get("link", ""), "releaseDate": date
             }
             st.session_state.manga_data.append(new_d)
             save_data(st.session_state.manga_data)
-            st.success(f"『{title}』 Vol.{vol} を追加しました！")
+            st.success(f"『{title}』 Vol.{init['volume']} を追加しました！")
             
             st.session_state.search_results = []
             st.session_state.selected_book = None
@@ -390,30 +377,31 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                 "meta": latest_row.to_dict()
             })
         
-        # 更新順に並べる
         series_groups.sort(key=lambda x: x['last_updated'], reverse=True)
         
-        # グリッド表示
         cols = st.columns(4)
         for i, series in enumerate(series_groups):
             col = cols[i % 4]
             with col:
-                # 表紙画像 (1巻)
                 if series['image']:
                     st.image(series['image'], use_container_width=True)
                 else:
                     st.markdown(f"<div style='background:#eee;height:150px;text-align:center;padding:60px 0;'>No Img</div>", unsafe_allow_html=True)
                 
-                # タイトル
                 st.markdown(f"**{series['title']}**")
                 
-                # 詳細を開くボタン（ダイアログ起動）
                 count = len(series['df'])
-                # シリーズ名を渡してダイアログを開く
+                # ダイアログを開くためのState管理
                 if st.button(f"📂 全{count}冊を見る", key=f"open_{series['title']}"):
-                    series_detail_dialog(series['title'])
+                    st.session_state.opened_series_title = series['title']
+                    st.rerun() # 状態を保存してリラン
                 
                 st.divider()
+        
+        # ダイアログの表示制御（ループ外で行う）
+        if st.session_state.opened_series_title:
+            series_detail_dialog(st.session_state.opened_series_title)
+
     else:
         st.info("登録された漫画はありません。")
 
