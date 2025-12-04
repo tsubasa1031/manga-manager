@@ -202,7 +202,6 @@ def render_edit_form(item, key_suffix=""):
             else: st.write("No Image")
         with col2:
             new_title = st.text_input("タイトル", item["title"])
-            # 巻数は表示のみにする（変更不可、または変更したい場合は削除して再登録を促すのが安全）
             st.caption(f"巻数: {item['volume']}")
             new_date = st.text_input("発売日", item.get("releaseDate", ""))
             
@@ -210,7 +209,6 @@ def render_edit_form(item, key_suffix=""):
                 for d in st.session_state.manga_data:
                     if d['id'] == item['id']:
                         d['title'] = new_title
-                        # volumeは変更しない
                         d['releaseDate'] = new_date
                         break
                 save_data(st.session_state.manga_data)
@@ -224,7 +222,6 @@ def render_edit_form(item, key_suffix=""):
 # シリーズ詳細ダイアログ
 @st.dialog("シリーズ詳細", width="large")
 def series_detail_dialog(series_title):
-    # 最新データを取得
     current_data = st.session_state.manga_data
     series_books = [d for d in current_data if normalize_title(d['title']) == series_title]
     
@@ -232,6 +229,7 @@ def series_detail_dialog(series_title):
         st.error("データが見つかりません。")
         return
 
+    # 巻数順にソート
     df_series = pd.DataFrame(series_books).sort_values("volume")
     max_vol = df_series['volume'].max()
     min_vol_idx = df_series['volume'].idxmin()
@@ -244,7 +242,6 @@ def series_detail_dialog(series_title):
     
     col_add, col_link = st.columns([2, 1])
     with col_add:
-        # ここでボタンを押して追加処理が走っても、opened_series_title が維持されていればダイアログは再描画される
         if st.button(f"➕ 次の巻 (Vol.{next_vol_num}) を追加", key=f"dlg_add_{series_title}"):
             with st.spinner("検索中..."):
                 new_info = get_next_volume_info(series_title, next_vol_num, rakuten_app_id)
@@ -270,19 +267,27 @@ def series_detail_dialog(series_title):
 
     st.divider()
 
-    # --- 所持巻リスト ---
-    vol_cols = st.columns(4)
-    for j, (idx, row) in enumerate(df_series.iterrows()):
-        with vol_cols[j % 4]:
-            if row.get("image"):
-                st.image(row["image"], use_container_width=True)
-            else:
-                st.caption("No Image")
-            
-            with st.popover("編集"):
-                render_edit_form(row.to_dict(), "popover")
-            
-            st.caption(f"Vol.{row['volume']}")
+    # --- 所持巻リスト（モバイル対応グリッド） ---
+    # st.columns(4) でループするとモバイルで縦一列に1,5,9...と並んでしまうため
+    # 4個ずつのチャンクに分けて行を作成する
+    cols_per_row = 4
+    rows = [row for _, row in df_series.iterrows()]
+    
+    for i in range(0, len(rows), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for j in range(cols_per_row):
+            if i + j < len(rows):
+                row = rows[i + j]
+                with cols[j]:
+                    if row.get("image"):
+                        st.image(row["image"], use_container_width=True)
+                    else:
+                        st.caption("No Image")
+                    
+                    with st.popover("編集"):
+                        render_edit_form(row, f"popover_{i}_{j}")
+                    
+                    st.caption(f"Vol.{row['volume']}")
 
 
 # --- メインビュー ---
@@ -330,8 +335,6 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
         with col_form:
             st.caption("以下の内容で登録します")
             title = st.text_input("タイトル (シリーズ名)", init["title"])
-            # 巻数スライダーを削除し、表示のみにする（または隠す）
-            # ここでは確認用にテキスト表示
             st.write(f"**巻数:** {init['volume']}")
             date = st.text_input("発売日", value=init.get("releaseDate", ""))
             
@@ -377,28 +380,30 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                 "meta": latest_row.to_dict()
             })
         
+        # 更新順
         series_groups.sort(key=lambda x: x['last_updated'], reverse=True)
         
-        cols = st.columns(4)
-        for i, series in enumerate(series_groups):
-            col = cols[i % 4]
-            with col:
-                if series['image']:
-                    st.image(series['image'], use_container_width=True)
-                else:
-                    st.markdown(f"<div style='background:#eee;height:150px;text-align:center;padding:60px 0;'>No Img</div>", unsafe_allow_html=True)
-                
-                st.markdown(f"**{series['title']}**")
-                
-                count = len(series['df'])
-                # ダイアログを開くためのState管理
-                if st.button(f"📂 全{count}冊を見る", key=f"open_{series['title']}"):
-                    st.session_state.opened_series_title = series['title']
-                    st.rerun() # 状態を保存してリラン
-                
-                st.divider()
+        # --- モバイル対応グリッド表示 ---
+        cols_per_row = 4
+        for i in range(0, len(series_groups), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j in range(cols_per_row):
+                if i + j < len(series_groups):
+                    series = series_groups[i + j]
+                    with cols[j]:
+                        if series['image']:
+                            st.image(series['image'], use_container_width=True)
+                        else:
+                            st.markdown(f"<div style='background:#eee;height:150px;text-align:center;padding:60px 0;'>No Img</div>", unsafe_allow_html=True)
+                        
+                        st.markdown(f"**{series['title']}**")
+                        
+                        count = len(series['df'])
+                        if st.button(f"📂 全{count}冊を見る", key=f"open_{series['title']}"):
+                            st.session_state.opened_series_title = series['title']
+                            st.rerun()
         
-        # ダイアログの表示制御（ループ外で行う）
+        # ダイアログ制御
         if st.session_state.opened_series_title:
             series_detail_dialog(st.session_state.opened_series_title)
 
