@@ -135,39 +135,18 @@ def search_rakuten_books(query, app_id, genre_id="001001", hits=30, sort="+relea
                 # 画像URLの高画質化処理
                 image_url = info.get("largeImageUrl", "")
                 if image_url:
-                    # 末尾のサイズ指定パラメータ(?_ex=200x200など)を削除してオリジナルサイズを取得
                     image_url = image_url.split("?")[0]
 
                 if title:
                     results.append({
                         "title": title, "author": info.get("author", "不明"),
                         "publisher": info.get("publisherName", ""), 
-                        "image": image_url, # 高画質化したURL
+                        "image": image_url,
                         "link": info.get("itemUrl", ""), "isbn": isbn, "releaseDate": info.get("salesDate", ""),
                         "source": "Rakuten"
                     })
         return results
     except: return []
-
-def get_series_stats(series_title, app_id):
-    """シリーズの統計情報を取得"""
-    if not app_id or not series_title: return 1, None, {}
-    
-    results = search_rakuten_books(series_title, app_id, hits=30, sort="standard")
-    max_vol = 1
-    meta = None
-    vol_image_map = {}
-    
-    if results:
-        sorted_by_vol = sorted(results, key=lambda x: extract_volume(x['title']))
-        meta = sorted_by_vol[0] if sorted_by_vol else results[0]
-        
-        for res in results:
-            v = extract_volume(res['title'])
-            if v > max_vol: max_vol = v
-            if res.get('image'): vol_image_map[v] = res['image']
-
-    return max_vol, meta, vol_image_map
 
 def get_next_volume_info(series_title, next_vol, app_id):
     """次巻情報取得 (通常版優先)"""
@@ -193,13 +172,9 @@ if 'selected_book' not in st.session_state:
     st.session_state.selected_book = None
 if 'last_search_query' not in st.session_state:
     st.session_state.last_search_query = ""
-# シリーズ情報保持用
-if 'series_max_vol' not in st.session_state:
-    st.session_state.series_max_vol = 1
-if 'series_meta_info' not in st.session_state:
-    st.session_state.series_meta_info = {}
-if 'series_vol_images' not in st.session_state:
-    st.session_state.series_vol_images = {}
+# ダイアログの開閉状態を管理する変数
+if 'opened_series_title' not in st.session_state:
+    st.session_state.opened_series_title = None
 
 # --- サイドバー ---
 with st.sidebar:
@@ -224,23 +199,23 @@ def update_data(edited_df):
     st.session_state.manga_data = list(current_data_map.values())
     save_data(st.session_state.manga_data)
 
-@st.dialog("1冊の詳細編集")
-def edit_single_book_dialog(item):
-    """個別の本の編集用ダイアログ"""
-    with st.form(f"edit_form_{item['id']}"):
+# 1冊の詳細編集フォーム
+def render_edit_form(item, key_suffix=""):
+    with st.form(f"edit_form_{item['id']}_{key_suffix}"):
         col1, col2 = st.columns([1, 2])
         with col1:
-            if item.get("image"): st.image(item["image"], width=150) # 画像サイズ少し大きく
+            if item.get("image"): st.image(item["image"], width=100)
             else: st.write("No Image")
         with col2:
             new_title = st.text_input("タイトル", item["title"])
-            new_vol = st.number_input("巻数", value=item["volume"], step=1)
+            # 巻数表示を削除
             new_date = st.text_input("発売日", item.get("releaseDate", ""))
             
             if st.form_submit_button("更新"):
                 for d in st.session_state.manga_data:
                     if d['id'] == item['id']:
-                        d['title'] = new_title; d['volume'] = new_vol; d['releaseDate'] = new_date
+                        d['title'] = new_title
+                        d['releaseDate'] = new_date
                         break
                 save_data(st.session_state.manga_data)
                 st.rerun()
@@ -250,6 +225,7 @@ def edit_single_book_dialog(item):
                 save_data(st.session_state.manga_data)
                 st.rerun()
 
+# シリーズ詳細ダイアログ
 @st.dialog("シリーズ詳細", width="large")
 def series_detail_dialog(series_title):
     # 最新データを取得
@@ -316,7 +292,7 @@ def series_detail_dialog(series_title):
                     with st.popover("編集"):
                         render_edit_form(row, f"popover_{i}_{j}")
                     
-                    st.caption(f"Vol.{row['volume']}")
+                    # 巻数表示削除
 
 
 # --- メインビュー ---
@@ -364,8 +340,7 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
         with col_form:
             st.caption("以下の内容で登録します")
             title = st.text_input("タイトル (シリーズ名)", init["title"])
-            # 巻数スライダー
-            vol = st.slider("巻数", min_value=1, max_value=max(200, init["volume"] + 10), value=init["volume"])
+            # 巻数表示削除
             date = st.text_input("発売日", value=init.get("releaseDate", ""))
             
             submit = st.form_submit_button("追加", type="primary")
@@ -373,14 +348,14 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
         if submit and title:
             new_d = {
                 "id": datetime.now().strftime("%Y%m%d%H%M%S"),
-                "title": title, "volume": vol, "status": "own",
+                "title": title, "volume": init["volume"], "status": "own",
                 "image": init.get("image", ""), "author": init.get("author", ""),
                 "publisher": init.get("publisher", ""), "isbn": init.get("isbn", ""), 
                 "link": init.get("link", ""), "releaseDate": date
             }
             st.session_state.manga_data.append(new_d)
             save_data(st.session_state.manga_data)
-            st.success(f"『{title}』 Vol.{vol} を追加しました！")
+            st.success(f"『{title}』 Vol.{init['volume']} を追加しました！")
             
             st.session_state.search_results = []
             st.session_state.selected_book = None
