@@ -622,5 +622,17 @@
         "link": "https://books.rakuten.co.jp/rb/17329250/?rafcid=wsc_b_ts_1087757348581566314",
         "isbn": "9784088925349",
         "releaseDate": "2022年12月19日"
+    },
+    {
+        "id": "20251204052821",
+        "title": "MFゴースト",
+        "volume": 1,
+        "status": "own",
+        "image": "https://thumbnail.image.rakuten.co.jp/@0_mall/book/cabinet/7072/9784065107072_1_15.jpg?_ex=200x200",
+        "author": "しげの 秀一",
+        "publisher": "講談社",
+        "isbn": "9784065107072",
+        "link": "https://books.rakuten.co.jp/rb/15266001/?rafcid=wsc_b_ts_1087757348581566314",
+        "releaseDate": "2018年01月05日"
     }
 ]
