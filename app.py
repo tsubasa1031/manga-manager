@@ -292,7 +292,7 @@ def series_detail_dialog(series_title):
                     with st.popover("編集"):
                         render_edit_form(row, f"popover_{i}_{j}")
                     
-                    # 巻数表示削除
+                    st.caption(f"Vol.{row['volume']}")
 
 
 # --- メインビュー ---
@@ -359,6 +359,8 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
             
             st.session_state.search_results = []
             st.session_state.selected_book = None
+            # 登録処理後、ダイアログの状態をリセットして、古い本棚が開かないようにする
+            st.session_state.opened_series_title = None 
             st.rerun()
 
     st.divider()
@@ -396,13 +398,16 @@ if view_mode == "➕ 漫画登録＆ライブラリ":
                 if i + j < len(series_groups):
                     series = series_groups[i + j]
                     with cols[j]:
+                        # 表紙画像 (1巻)
                         if series['image']:
                             st.image(series['image'], use_container_width=True)
                         else:
                             st.markdown(f"<div style='background:#eee;height:150px;text-align:center;padding:60px 0;'>No Img</div>", unsafe_allow_html=True)
                         
+                        # タイトル
                         st.markdown(f"**{series['title']}**")
                         
+                        # 詳細を開くボタン（ダイアログ起動）
                         count = len(series['df'])
                         if st.button(f"📂 全{count}冊を見る", key=f"open_{series['title']}"):
                             st.session_state.opened_series_title = series['title']
